@@ -622,6 +622,10 @@ namespace QuickDeploy
                         Say("0.4 s more (the page)");
                         TagsPage.ScrollToVerticalOffset(0); UpdateLayout();
                         Turn(600); Say("next turn, after a rest");
+                        // the page turning, then a list comes under the pointer: the list takes over at once
+                        inner.ScrollToVerticalOffset(0); UpdateLayout();
+                        var pageBefore = TagsPage.VerticalOffset;
+                        Turn(30); Say("still the same turn, the list under the pointer (the list moves)");
                         inner.MaxHeight = double.PositiveInfinity;
                         TagsPage.ScrollToVerticalOffset(0); UpdateLayout();
                         Say("no scroll on the list");
@@ -1190,10 +1194,7 @@ namespace QuickDeploy
             head.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = B(far == 0 ? "Blue" : "Yellow"), Margin = new Thickness(0, 0, 8, 0) });
             head.Children.Add(new TextBlock { Text = Texts.Get(state), FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             card.Children.Add(head);
-            card.Children.Add(Small(Texts.Get("target_lib"), new Thickness(0, 8, 0, 0)));
-            foreach (var root in Roots().Take(4)) card.Children.Add(Code(root));
-            card.Children.Add(Small(Texts.Get("target_game"), new Thickness(0, 8, 0, 0)));
-            if (st.GameDir != null) card.Children.Add(Code(st.GameDir));
+            // no folders here: the Storage page shows them and changes them (the user, 2026-10-25)
             // only shown here: a "Change…" in this card read as changing the mod library too (the
             // user, 2026-10-25); the game folder is changed on the Storage page. With none set yet
             // the card offers to choose one.
@@ -1442,17 +1443,19 @@ namespace QuickDeploy
                 menu.Items.Add(pick);
                 menu.IsOpen = true;
             };
-            DockPanel.SetDock(moveBtn, Dock.Right);
-            bar.Children.Add(moveBtn);
-            // the page for seeing what takes space is where it gets deleted (the user, 2026-10-25)
+            // the page for seeing what takes space is where it gets deleted (the user, 2026-10-25);
+            // Delete at the end, Move before it
             var delBtn = new Button
             {
                 Content = Texts.F("st_delete_n", ticked.Count), Style = (Style)FindResource("Danger"), MinHeight = 40,
-                IsEnabled = ticked.Count > 0, Margin = new Thickness(0, 0, 8, 0),
+                IsEnabled = ticked.Count > 0,
             };
             delBtn.Click += (s, e) => DeleteTicked(sel.Mods.Where(m => ticked.Contains(m.Id)).ToList());
             DockPanel.SetDock(delBtn, Dock.Right);
             bar.Children.Add(delBtn);
+            moveBtn.Margin = new Thickness(0, 0, 8, 0);
+            DockPanel.SetDock(moveBtn, Dock.Right);
+            bar.Children.Add(moveBtn);
             var how = SortBy(storageSort, k => { storageSort = k; RenderStorage(); },
                              ("size", Texts.Get("sort_size")), ("name", Texts.Get("sort_name")));
             ((FrameworkElement)how).Margin = new Thickness(0, 0, 12, 0);
@@ -1953,11 +1956,6 @@ namespace QuickDeploy
             Activate();
         }
 
-
-        /// <summary>The folders the mods are in, most mods first.</summary>
-        IEnumerable<string> Roots() => st.Mods.Where(m => m.Path != null)
-            .GroupBy(m => IOPath.GetDirectoryName(m.Path.TrimEnd('\\', '/')) ?? m.Path)
-            .OrderByDescending(g => g.Count()).Select(g => g.Key);
 
         // ---------------------------------------------------------------- the list
 
@@ -3412,7 +3410,12 @@ namespace QuickDeploy
             bool fresh = unchecked(e.Timestamp - wheelLast) > WheelRestMs || wheelTarget == null ||
                          !wheelTarget.IsVisible || !scrolls.Contains(wheelTarget);
             wheelLast = e.Timestamp;
-            if (fresh) { wheelTarget = scrolls.FirstOrDefault(v => CanMove(v, e.Delta)); wheelMoved = e.Timestamp; }
+            var innermost = scrolls.FirstOrDefault(v => CanMove(v, e.Delta));
+            if (fresh) { wheelTarget = innermost; wheelMoved = e.Timestamp; }
+            // the page brought a list under a pointer that stayed put: the list takes the wheel at
+            // once, not when the wheel rests (the user, 2026-10-25: it took a long while)
+            else if (innermost != null && innermost != wheelTarget && scrolls.IndexOf(innermost) < scrolls.IndexOf(wheelTarget))
+            { wheelTarget = innermost; wheelMoved = e.Timestamp; }
             if (wheelTarget == null) return;                    // nothing here moves that way
             e.Handled = true;
             if (!CanMove(wheelTarget, e.Delta))
