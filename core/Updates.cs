@@ -61,9 +61,16 @@ namespace Hd2Mod
             if (Origins.FromArsenal(lib) > 0) lib.Save();
             var out_ = new List<UpdateInfo>();
             int i = 0;
+            bool busy = false;
             foreach (var m in lib.Mods)
             {
-                out_.Add(One(m));
+                // once Nexus Mods says too many requests, it is not asked again in this check:
+                // the rest of its mods say so without a request (its rate limit is the player's)
+                var u = busy && m.Nexus != null
+                    ? new UpdateInfo { ModId = m.Id, Name = m.Name, Channel = Origins.Of(m).Channel, Page = Origins.Of(m).Page, Status = "error", Why = "nexus_busy" }
+                    : One(m);
+                busy |= u.Why == "nexus_busy";
+                out_.Add(u);
                 progress?.Invoke(++i, lib.Mods.Count);
             }
             return out_;
