@@ -1422,7 +1422,8 @@ namespace QuickDeploy
             Stat("stat_links", st == null ? "—" : Texts.F("stat_links_v", Texts.N(st.LinkedFiles), Texts.Size(st.LinkedBytes)));
             Stat("stat_saved", st == null ? "—" : Texts.Size(st.SavedBytes));
             won.Children.Add(nums);
-            won.Children.Add(Small(Texts.Get("st_saved_note"), new Thickness(0, 12, 0, 0)));
+            // an explaining line, gone with the others (the user, 2026-10-25)
+            if (Texts.Hints) won.Children.Add(Small(Texts.Get("st_saved_note"), new Thickness(0, 12, 0, 0)));
             Storages.Children.Add(new Border { BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(16), Child = won });
             Storages.Children.Add(new Border { Height = 20 });
 
@@ -4048,7 +4049,8 @@ namespace QuickDeploy
             foot.Children.Add(rest);
             foot.Children.Add(new TextBlock
             {
-                Text = tagDone ?? Texts.Get("tag_foot"), FontSize = 12, Foreground = B(tagDone != null ? "Blue" : "Muted"),
+                // what was just done stays; the line that explains labels is an explaining line (the user, 2026-10-25)
+                Text = tagDone ?? (Texts.Hints ? Texts.Get("tag_foot") : ""), FontSize = 12, Foreground = B(tagDone != null ? "Blue" : "Muted"),
                 TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center,
             });
             right.Children.Add(foot);

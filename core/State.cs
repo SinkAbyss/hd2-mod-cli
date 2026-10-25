@@ -7,7 +7,7 @@ namespace Hd2Mod
 {
     public static class StateDoc
     {
-        public const string Version = "0.7.0";
+        public const string Version = "0.8.0";
 
         /// <summary>Patch files (not companions) and bytes (with companions) in folders, not recursive.</summary>
         static (long Files, long Bytes) FolderStats(IEnumerable<string> folders)
