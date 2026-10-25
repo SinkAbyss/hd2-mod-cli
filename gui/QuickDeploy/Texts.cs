@@ -214,6 +214,32 @@ namespace QuickDeploy
             ["clash"] = ("{0} resources also in {1}", "与 {1} 有 {0} 处资源冲突"),
             ["clash_1"] = ("1 resource also in {1}", "与 {1} 有 1 处资源冲突"),
             ["clash_win"] = ("By the load order, {0}'s version is used.", "按加载顺序，{0} 的版本生效。"),
+            ["clash_more"] = ("and {0} more", "另有 {0} 处"),
+            ["clash_no_names"] = ("Resource names come from HD2SDK's name list. HD2SDK is not installed here, so only the type and id are shown.",
+                                  "资源名称取自 HD2SDK 的名称表。本机未安装 HD2SDK，因此只显示类型与编号。"),
+            // resource types as the conflicts name them; any other type is shown by its engine name
+            ["rt_unit"] = ("Model", "模型"),
+            ["rt_texture"] = ("Texture", "贴图"),
+            ["rt_material"] = ("Material", "材质"),
+            ["rt_animation"] = ("Animation", "动画"),
+            ["rt_bones"] = ("Bones", "骨骼"),
+            ["rt_state_machine"] = ("Animation states", "动画状态机"),
+            ["rt_particles"] = ("Particle effect", "粒子特效"),
+            ["rt_wwise_bank"] = ("Sound bank", "音频库"),
+            ["rt_wwise_stream"] = ("Sound", "音频"),
+            ["rt_wwise_dep"] = ("Sound link", "音频关联"),
+            ["rt_geometry_group"] = ("Geometry", "几何体"),
+            ["rt_physics"] = ("Physics", "物理"),
+            ["rt_lua"] = ("Script", "脚本"),
+            ["rt_strings"] = ("Text", "文本"),
+            ["rt_font"] = ("Font", "字体"),
+            ["rt_package"] = ("Package", "资源包"),
+            ["rt_prefab"] = ("Prefab", "预制件"),
+            ["rt_entity"] = ("Entity", "实体"),
+            ["rt_level"] = ("Level", "关卡"),
+            ["rt_cloth"] = ("Cloth", "布料"),
+            ["rt_shading_environment"] = ("Lighting", "光照环境"),
+            ["rt_shading_environment_mapping"] = ("Lighting mapping", "光照环境映射"),
             // the same resource in two mods, byte for byte: shared, not fought over
             ["same"] = ("{0} resources are the same file as in {1}", "与 {1} 有 {0} 处文件完全相同"),
             ["same_1"] = ("1 resource is the same file as in {1}", "与 {1} 有 1 处文件完全相同"),
@@ -630,6 +656,8 @@ namespace QuickDeploy
             ["expand"] = ("Open", "展开"),
             ["collapse"] = ("Close", "收起"),
         };
+
+        public static bool Has(string key) => T.ContainsKey(key);
 
         public static string Get(string key)
         {

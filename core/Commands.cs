@@ -986,7 +986,9 @@ namespace Hd2Mod
                 o.WriteLine(keys.Count + " resource(s) in " + string.Join(" / ", mods) + " -- " +
                             (same ? "the very same bytes, nothing is overridden" : mods[mods.Count - 1] + " wins"));
                 if (a.Flag("--verbose"))
-                    foreach (var (t, id) in keys.Take(50)) o.WriteLine("      type " + t.ToString("x16") + "  id " + id.ToString("x16"));
+                    foreach (var (t, id) in keys.Take(50))
+                        o.WriteLine("      " + ResourceNames.Type(t).PadRight(14) + " " + id.ToString("x16") +
+                                    (ResourceNames.Name(id) is string n ? "  " + n : ""));
             }
             if (found.Count == 0) o.WriteLine("no resource is shipped by two mods");
         }

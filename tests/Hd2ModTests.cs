@@ -866,6 +866,37 @@ namespace Hd2Mod.Tests
             Assert.Contains("1 resource(s) in One / Two -- Two wins", Cli("conflicts"));
         }
 
+        /// <summary>A conflict says which resources it is about (the user, 2026-10-25): the type by
+        /// the engine's name, and the name when HD2SDK's list is installed; without the list, the id.</summary>
+        [Fact]
+        public void ConflictsNameTheirResources()
+        {
+            const ulong Unit = 0xe0a48d0be9a7453f, Odd = 0x1234;
+            Cli("add", Mod("One", new Dictionary<string, byte[]> { [A + ".patch_0"] = Archive(Bytes("one's own"), (Unit, 101), (Odd, 7)) }));
+            Cli("add", Mod("Two", new Dictionary<string, byte[]> { [A + ".patch_0"] = Archive(Bytes("two's own"), (Unit, 101), (Odd, 7)) }));
+            var list = Path.Combine(Root, "friendlynames.txt");
+            File.WriteAllText(list, "101 Laser Sight W/ Flashlight\n102 Something Else\nnot a line\n", new UTF8Encoding(false));
+            ResourceNames.ListOverride = list;
+            try
+            {
+                var said = Cli("conflicts", "-v");
+                Assert.Contains("unit", said);
+                Assert.Contains("Laser Sight W/ Flashlight", said);
+                Assert.Contains("0000000000001234", said);                  // a type not known: its hash
+                var c = ((List<object>)((Dictionary<string, object>)Json.Parse(Cli("state")))["conflicts"]).OfType<Dictionary<string, object>>().Single();
+                var res = ((List<object>)c["resources"]).OfType<Dictionary<string, object>>().ToDictionary(r => (string)r["id"]);
+                Assert.Equal("unit", res["0000000000000065"]["type"]);
+                Assert.Equal("Laser Sight W/ Flashlight", res["0000000000000065"]["name"]);
+                Assert.Null(res["0000000000000007"]["name"]);
+                Assert.True((bool)((Dictionary<string, object>)Json.Parse(Cli("state")))["resource_names"]);
+                // no list: the ids, and the state says names cannot be given
+                ResourceNames.ListOverride = Path.Combine(Root, "missing.txt");
+                Assert.DoesNotContain("Laser Sight", Cli("conflicts", "-v"));
+                Assert.False((bool)((Dictionary<string, object>)Json.Parse(Cli("state")))["resource_names"]);
+            }
+            finally { ResourceNames.ListOverride = null; }
+        }
+
         /// <summary>The same resource, byte for byte, in both mods (and at a different place in
         /// each archive): shared, not a conflict — whichever loads last, the game gets the same
         /// bytes (the user, 2026-10-24).</summary>

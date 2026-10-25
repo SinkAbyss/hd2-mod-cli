@@ -8,6 +8,8 @@ namespace Hd2Mod
     public static class StateDoc
     {
         public const string Version = "0.8.0";
+        /// <summary>How many of a conflict's resources the state names; the count says how many there are.</summary>
+        const int Shown = 30;
 
         /// <summary>Patch files (not companions) and bytes (with companions) in folders, not recursive.</summary>
         static (long Files, long Bytes) FolderStats(IEnumerable<string> folders)
@@ -193,18 +195,28 @@ namespace Hd2Mod
             {
                 // the same mods are one entry, and the resources they ship identically another:
                 // those are shared, not fought over
-                var pairs = new List<(List<string> Mods, bool Same, long Count)>();
+                var pairs = new List<(List<string> Mods, bool Same, long Count, List<Deploy.Clash> Some)>();
                 foreach (var c in Deploy.Clashes(d.All))
                 {
                     int i = pairs.FindIndex(p => p.Same == c.Same && p.Mods.SequenceEqual(c.Mods));
-                    if (i < 0) pairs.Add((c.Mods, c.Same, 1));
-                    else pairs[i] = (pairs[i].Mods, pairs[i].Same, pairs[i].Count + 1);
+                    if (i < 0) pairs.Add((c.Mods, c.Same, 1, new List<Deploy.Clash> { c }));
+                    else
+                    {
+                        if (pairs[i].Some.Count < Shown) pairs[i].Some.Add(c);
+                        pairs[i] = (pairs[i].Mods, pairs[i].Same, pairs[i].Count + 1, pairs[i].Some);
+                    }
                 }
+                // which resources they are (the user, 2026-10-25): the first ones of each pair,
+                // with the type and, when HD2SDK's list is installed, the name
                 foreach (var p in pairs.OrderByDescending(p => p.Count))      // stable, as Python's sorted
                     clashes.Add(new Dictionary<string, object>
                     {
                         ["mods"] = p.Mods.Cast<object>().ToList(), ["count"] = p.Count, ["winner"] = p.Mods[p.Mods.Count - 1],
                         ["same"] = p.Same,
+                        ["resources"] = p.Some.Select(c => (object)new Dictionary<string, object>
+                        {
+                            ["type"] = ResourceNames.Type(c.Type), ["id"] = c.Id.ToString("x16"), ["name"] = ResourceNames.Name(c.Id),
+                        }).ToList(),
                     });
             }
             Dictionary<string, object> summary = null;
@@ -306,7 +318,7 @@ namespace Hd2Mod
                 ["tool"] = "hd2-mod-cli", ["version"] = Version, ["game_dir"] = game, ["home"] = Store.Home, ["mods_dir"] = Store.ModsDir(),
                 ["summary"] = summary, ["links"] = links, ["saved_bytes"] = Json.Long(record, "saved_bytes"),
                 ["deploys"] = Json.Long(record, "deploys"), ["deletes"] = deletes.Cast<object>().ToList(),
-                ["mods"] = mods, ["conflicts"] = clashes, ["tags"] = lib.Tags.Cast<object>().ToList(),
+                ["mods"] = mods, ["conflicts"] = clashes, ["resource_names"] = ResourceNames.HaveNames, ["tags"] = lib.Tags.Cast<object>().ToList(),
                 // profiles: whether they are on, the one in use, all of them (Profiles)
                 ["profiles_on"] = lib.ProfilesOn, ["profile"] = lib.ProfilesOn ? lib.Active : null,
                 ["profiles"] = lib.Profiles.Select(p => (object)p.Name).ToList(),

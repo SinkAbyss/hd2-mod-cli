@@ -98,7 +98,7 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 | Mod list (middle) | The load order, top to bottom: **a mod lower in the list wins**. Each row: its number, its switch, its picture, its name, and under the name its version, what is chosen, a **LUA** tag when it runs scripts in the game and a **LOADER** tag when it replaces one of the game's own scripts the way a mod loader does; on the right a mark that checks this one mod for updates, its size and how it is deployed. Dropping a zip or a mod folder on the list installs it. Double-click a mod to give it a name of your own (the name it came with stays in its details); Ctrl or Shift takes several mods at once, and the right button turns them all on or off, moves them or removes them. |
 | Options (open a row with its arrow) | A mod's options as cards with their pictures, names and descriptions. A group is *pick one* (Ctrl+click for more); parts can each be on or off. |
 | Labels page | Your own labels for mods, with how many mods carry each one: make one, rename it, delete it, and tick the mods that carry it. |
-| Details (right) | The author's description (or, when the mod folder has none, what its site says), the load order, the folder, **Delete** (red), **Remove mod** and **Open its folder**; what the next deploy does to this mod (kept, renamed, new), its conflicts with other mods, the resources another mod ships byte for byte alike (shared, not fought over), and its source: **Match the source** asks the site what the mod is called and fills in its name, version, author, description and picture. |
+| Details (right) | The author's description (or, when the mod folder has none, what its site says), the load order, the folder, **Delete** (red), **Remove mod** and **Open its folder**; what the next deploy does to this mod (kept, renamed, new), its conflicts with other mods (each resource by its type, and by its name when HD2SDK is installed, e.g. "Model · Laser Sight W/ Flashlight"), the resources another mod ships byte for byte alike (shared, not fought over), and its source: **Match the source** asks the site what the mod is called and fills in its name, version, author, description and picture. |
 | Footer | What a deploy would do; **Deploy** and **Launch game**. A deploy never needs a purge first: it changes only what differs. **Restore vanilla** is at the bottom of the deploy target card, for playing without mods. |
 
 ### Everyday use
@@ -258,7 +258,7 @@ A change made on the command line shows in an open window half a second later.
 | `tags` | Your own labels, with how many mods carry each. |
 | `tag MOD NAME...` / `untag MOD NAME...` | Put labels on a mod, or take them off (`--all` takes them all off). |
 | `tag-rename OLD NEW` / `tag-delete NAME` | Rename a label everywhere, or take it off every mod. |
-| `conflicts [-v]` | Resources that more than one mod ships, and which one wins; the ones every mod ships byte for byte alike are named as shared, not as a conflict. |
+| `conflicts [-v]` | Resources that more than one mod ships, and which one wins; the ones every mod ships byte for byte alike are named as shared, not as a conflict. `-v` lists each resource's type and id, and its name from HD2SDK's name list when HD2SDK is installed. |
 | `state [--verify]` | Everything the window shows, as JSON. |
 
 `MOD` is the mod's number in `list`, its name, or a unique part of its name.
@@ -391,7 +391,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 | 中间 · mod 列表 | 加载顺序自上而下，**越靠下优先级越高**。每行显示：序号、开关、图片、名称，名称下方为版本、已选内容、**LUA** 标签（会在游戏中运行脚本的 mod）与 **LOADER** 标签（替换了游戏自带脚本、相当于自带加载器的 mod）；右侧为单独检查该 mod 更新的图标、大小与部署方式。将 zip 压缩包或 mod 文件夹拖到列表上即可安装。双击 mod 可自定义名称（原名保留在详情中）；按住 Ctrl 或 Shift 可多选，右键可一起启用、停用、移动或移除 |
 | 可选内容（点击行左侧箭头展开） | 以卡片显示图片、名称和作者说明。一组内为单选（Ctrl+点击可多选）；附加内容可分别开关 |
 | 标签页 | 自己给 mod 贴的标签，显示每个标签上有多少 mod：新建、重命名、删除，并勾选属于该标签的 mod |
-| 右侧 · 详情 | 作者说明（mod 文件夹中没有说明时，显示来源网站的说明）、加载顺序、文件夹，以及 **删除**（红色外框）、**移除 mod**、**打开文件夹**；下次部署对该 mod 的处理（保留、重命名、新增），与其他 mod 的资源冲突，以及与其他 mod 内容完全相同的资源（属于共用，不算冲突），以及来源：点击 **匹配来源信息** 可从网站取回该 mod 的名称、版本、作者、说明和图片 |
+| 右侧 · 详情 | 作者说明（mod 文件夹中没有说明时，显示来源网站的说明）、加载顺序、文件夹，以及 **删除**（红色外框）、**移除 mod**、**打开文件夹**；下次部署对该 mod 的处理（保留、重命名、新增），与其他 mod 的资源冲突（逐项列出资源类型；安装了 HD2SDK 时还会显示名称，如“模型 · Laser Sight W/ Flashlight”），以及与其他 mod 内容完全相同的资源（属于共用，不算冲突），以及来源：点击 **匹配来源信息** 可从网站取回该 mod 的名称、版本、作者、说明和图片 |
 | 底部 | 部署将执行的操作；**部署**、**启动游戏**。部署前无需清空，部署只处理有差别的文件 |
 
 ### 日常使用

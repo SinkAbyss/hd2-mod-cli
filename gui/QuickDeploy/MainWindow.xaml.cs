@@ -711,6 +711,14 @@ namespace QuickDeploy
                 g.Start();
                 return;
             }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "conflict")
+            {
+                // "conflict": the list of mods in conflict, the first one's details on show
+                var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                g.Tick += (s, e) => { g.Stop(); filter = "conflict"; RenderNav(); FollowList(); RenderList(); };
+                g.Start();
+                return;
+            }
             if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "updates")
             {
                 // "updates": the update check's button, the same way
@@ -1141,14 +1149,21 @@ namespace QuickDeploy
             SearchHint.Visibility = SearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
             SearchClear.Visibility = SearchBox.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
             if (st == null) return;
-            // the details follow the search: the chosen mod, else the first that matches
+            FollowList();
+            RenderList();
+        }
+
+        /// <summary>The details follow what the list shows: the chosen mod while it is in the
+        /// list, else the first one in it. For the search, and for the list on the left (the
+        /// user, 2026-10-25: 冲突 showed a mod in no conflict).</summary>
+        void FollowList()
+        {
             var first = Seen().FirstOrDefault();
             if (first != null && !st.Mods.Any(m => m.Id == selectedId && Shown(m)))
             {
                 selectedId = first.Id;
                 RenderDetail();
             }
-            RenderList();
         }
 
         void SearchClear_Click(object sender, RoutedEventArgs e)
@@ -1262,7 +1277,7 @@ namespace QuickDeploy
                 row.Child = dp;
                 btn.Template = Plain();
                 btn.Content = row;
-                btn.Click += (s, e) => { filter = key; RenderNav(); RenderList(); };
+                btn.Click += (s, e) => { filter = key; RenderNav(); FollowList(); RenderList(); };
                 Nav.Children.Add(btn);
             }
 
@@ -2854,6 +2869,22 @@ namespace QuickDeploy
                     Foreground = B(c.Same ? "Ink" : "Yellow"), TextWrapping = TextWrapping.Wrap,
                 });
                 box.Children.Add(Small(c.Same ? Texts.Get("same_tip") : Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
+                // which resources (the user, 2026-10-25): type, then the name or the id
+                const int lines = 8;
+                var list = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+                foreach (var r in c.Resources.Take(lines))
+                {
+                    var tb = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 13, Margin = new Thickness(0, 1, 0, 1) };
+                    tb.Inlines.Add(new System.Windows.Documents.Run(TypeLabel(r.Type) + "  ·  ") { Foreground = B("Muted") });
+                    if (r.Name != null) tb.Inlines.Add(new System.Windows.Documents.Run(r.Name) { Foreground = B("Ink") });
+                    else tb.Inlines.Add(new System.Windows.Documents.Run(r.Id) { Foreground = B("Muted"), FontFamily = Mono, FontSize = 12 });
+                    list.Children.Add(tb);
+                }
+                if (c.Count > Math.Min(lines, c.Resources.Count))
+                    list.Children.Add(Small(Texts.F("clash_more", c.Count - Math.Min(lines, c.Resources.Count)), new Thickness(0, 2, 0, 0)));
+                if (list.Children.Count > 0) box.Children.Add(list);
+                if (!st.ResourceNames && c.Resources.Count > 0 && Texts.Hints)
+                    box.Children.Add(Small(Texts.Get("clash_no_names"), new Thickness(0, 8, 0, 0)));
                 Detail.Children.Add(new Border { BorderBrush = B(c.Same ? "Grid" : "Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(12), Margin = new Thickness(0, 16, 0, 0), Child = box });
             }
 
@@ -4505,6 +4536,9 @@ namespace QuickDeploy
             body.Children.Add(close);
             w.ShowDialog();
         }
+
+        /// <summary>A resource type as the conflicts name it: in words for the common ones, else the engine's name.</summary>
+        static string TypeLabel(string type) => Texts.Has("rt_" + type) ? Texts.Get("rt_" + type) : type;
 
         /// <summary>A line that opens an address in the browser.</summary>
         UIElement Link(string text, string url)

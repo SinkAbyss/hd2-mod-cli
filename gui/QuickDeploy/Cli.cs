@@ -96,6 +96,8 @@ namespace QuickDeploy
         public string Winner;
         /// <summary>Every mod ships the very same bytes: shared, not fought over.</summary>
         public bool Same;
+        /// <summary>The first of its resources: type, id, and name when HD2SDK's list knows it.</summary>
+        public List<(string Type, string Id, string Name)> Resources = new List<(string, string, string)>();
     }
 
     /// <summary>A deploy another program is in the middle of.</summary>
@@ -137,6 +139,8 @@ namespace QuickDeploy
         /// <summary>Every label the library knows, whether or not a mod carries it.</summary>
         public List<string> Tags = new List<string>();
         public List<Clash> Clashes = new List<Clash>();
+        /// <summary>Whether resources can be named (HD2SDK's list was found).</summary>
+        public bool ResourceNames;
         /// <summary>The folders of old versions left in the library folder.</summary>
         public List<Leftover> Leftovers = new List<Leftover>();
         /// <summary>The game folder against the library, as the last state read found it.</summary>
@@ -239,7 +243,12 @@ namespace QuickDeploy
             foreach (var l in List(d, "leftovers").OfType<Dictionary<string, object>>())
                 s.Leftovers.Add(new Leftover { Path = Str(l, "path"), Name = Str(l, "name"), Bytes = Long(l, "bytes") });
             foreach (var c in List(d, "conflicts").OfType<Dictionary<string, object>>())
-                s.Clashes.Add(new Clash { Mods = List(c, "mods").OfType<string>().ToList(), Count = Int(c, "count"), Winner = Str(c, "winner"), Same = Bool(c, "same") });
+                s.Clashes.Add(new Clash
+                {
+                    Mods = List(c, "mods").OfType<string>().ToList(), Count = Int(c, "count"), Winner = Str(c, "winner"), Same = Bool(c, "same"),
+                    Resources = List(c, "resources").OfType<Dictionary<string, object>>().Select(r => (Str(r, "type"), Str(r, "id"), Str(r, "name"))).ToList(),
+                });
+            s.ResourceNames = Bool(d, "resource_names");
             foreach (var m in List(d, "mods").OfType<Dictionary<string, object>>())
             {
                 var row = new ModRow
