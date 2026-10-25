@@ -743,20 +743,29 @@ namespace Hd2Mod
                     }
                 }
             }
+            // the loaders the library has, never every loader there is (the user, 2026-10-26)
+            string Have(params string[] kinds)
+            {
+                var have = all.Where(x => x.Loader != null && kinds.Contains(x.Loader))
+                              .Select(x => LoaderName(x.Loader, x) + (x.Mod.Enabled ? "" : " (off)")).Distinct().ToList();
+                return have.Count > 0 ? "in the library: " + string.Join(", ", have) : "none in the library";
+            }
             o.WriteLine("Lua mods:");
             foreach (var ml in all)
             {
                 var what = new List<string>();
                 if (ml.Loader != null) what.Add("loader: " + LoaderName(ml.Loader == "chef" ? "chef" : ml.Loader, ml));
-                if (ml.Needs == "any") what.Add("needs a loader");
-                if (ml.Needs == "chef") what.Add("needs Chef Shared Loader");
+                if (ml.Needs == "any") what.Add("needs a loader (" + Have("bml", "chef", "bsl") + ")");
+                if (ml.Needs == "chef") what.Add("needs Chef Shared Loader" + (ml.NeedsWhy == "declared" ? ", as the mod declares" : "") + " (" + Have("chef") + ")");
                 if (ml.PackOfName != null) what.Add("translation pack of " + (ml.PackOf?.Name ?? ml.PackOfName));
                 foreach (var s in ml.Broken)
                 {
                     var name = s.Name ?? (s.Id == LuaMods.BootId ? "boot" : s.Id.ToString("x16"));
-                    if (s.Error != null) what.Add("cannot run: " + name + " line " + s.Error.Value.Line + ": " + s.Error.Value.Message);
-                    else if (s.LuaJitBytecode) what.Add("cannot run: " + name + " is LuaJIT bytecode");
-                    else what.Add("cannot run: " + name + " uses " + string.Join(", ", s.Jit) + " (LuaJIT only)");
+                    if (s.Error != null) what.Add("cannot run: " + name + " line " + s.Error.Value.Line + ": " + s.Error.Value.Message +
+                                                  (s.ErrorKind != null && s.ErrorKind != "syntax" ? " (" + s.ErrorKind.Replace('_', ' ') + ")" : ""));
+                    else if (s.LuaJitBytecode) what.Add("cannot run: " + name + " is code compiled for LuaJIT");
+                    else what.Add("cannot run: " + name + " uses " + string.Join(", ", s.Jit.Select(j => j == "ffi" ? "FFI" : j)) +
+                                  " (LuaJIT's; the game's Lua 5.1 does not provide it at present, since the 2026-10-20 update)");
                 }
                 if (what.Count == 0) continue;
                 o.WriteLine("  " + (ml.Mod.Enabled ? "[x] " : "[ ] ") + ml.Mod.Name + ": " + string.Join("; ", what));

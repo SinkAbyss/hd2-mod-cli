@@ -43,8 +43,9 @@ namespace QuickDeploy
         /// <summary>Its own start-up script's kind (bml, chef_stub, chef, bsl, other), else null.</summary>
         public string Boot;
         public List<string> Scripts = new List<string>();
-        public List<(string Script, int Line, string Message, List<string> Jit, bool LuaJitBytecode)> Broken =
-            new List<(string, int, string, List<string>, bool)>();
+        public List<(string Script, int Line, string Message, string Kind, List<string> Jit, bool LuaJitBytecode)> Broken =
+            new List<(string, int, string, string, List<string>, bool)>();
+        public string NeedsWhy;
         /// <summary>The mod it translates (its id when installed) and that mod's script name.</summary>
         public string PackOf, PackOfName;
         /// <summary>Boot Mod Loader's log of the last session: loaded, failed or no_compile.</summary>
@@ -345,7 +346,8 @@ namespace QuickDeploy
                         Scripts = List(li, "scripts").OfType<string>().ToList(), PackOf = Str(li, "pack_of"), PackOfName = Str(li, "pack_of_name"),
                     };
                     foreach (var b in List(li, "broken").OfType<Dictionary<string, object>>())
-                        lu.Broken.Add((Str(b, "script"), Int(b, "line"), Str(b, "message"), List(b, "jit").OfType<string>().ToList(), Bool(b, "luajit_bytecode")));
+                        lu.Broken.Add((Str(b, "script"), Int(b, "line"), Str(b, "message"), Str(b, "error_kind"), List(b, "jit").OfType<string>().ToList(), Bool(b, "luajit_bytecode")));
+                    lu.NeedsWhy = Str(li, "needs_why");
                     if (li.TryGetValue("last", out var lv) && lv is Dictionary<string, object> last)
                     {
                         lu.LastState = Str(last, "state");

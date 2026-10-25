@@ -58,6 +58,28 @@ namespace Hd2Mod.Tests
             Assert.Contains("'end' expected (to close 'if' at line 1)", LuaSyntax.Check("if x then\ny = 1\n").Value.Message);
         }
 
+        /// <summary>What a script that does not compile uses, in words a player can follow (the
+        /// user, 2026-10-26: say what it uses, not only that it fails).</summary>
+        [Fact]
+        public void ACompileErrorSaysWhatTheScriptUses()
+        {
+            string Kind(string src) => LuaMods.Look(1, Encoding.UTF8.GetBytes(src)).ErrorKind;
+            string KindBytes(byte[] src) => LuaMods.Look(1, src).ErrorKind;
+            Assert.Equal("luajit_number", Kind("local x = 0xf6978e86e4f4b0d5ull"));
+            Assert.Equal("luajit_number", Kind("local x = 4294967296ULL"));
+            Assert.Equal("goto", Kind("for i = 1, 2 do\ngoto continue\n::continue::\nend"));
+            Assert.Equal("new_operator", Kind("x = a // b"));
+            Assert.Equal("new_operator", Kind("x = a & b"));
+            Assert.Equal("new_operator", Kind("x = a << 2"));
+            Assert.Equal("bom", KindBytes(new byte[] { 0xEF, 0xBB, 0xBF }.Concat(Encoding.ASCII.GetBytes("x = 1")).ToArray()));
+            Assert.Equal("locals", Kind("local " + string.Join(", ", Enumerable.Range(0, 201).Select(i => "v" + i))));
+            // an ordinary mistake stays a syntax error with PUC's own words; a comment or a string
+            // that mentions goto does not make it one
+            Assert.Equal("syntax", Kind("x = = 1 -- goto x"));
+            Assert.Equal("syntax", Kind("x = '//' y"));
+            Assert.Null(Kind("x = 1"));
+        }
+
         [Fact]
         public void TheParsersLimitsAreLua51s()
         {

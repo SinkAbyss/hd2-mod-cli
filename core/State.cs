@@ -151,12 +151,12 @@ namespace Hd2Mod
                 var last = session?.Mods.LastOrDefault(x => addons.Contains(x.Name));
                 entry["lua_info"] = new Dictionary<string, object>
                 {
-                    ["needs"] = ml.Needs, ["loader"] = ml.Loader, ["loader_version"] = ml.LoaderVersion, ["boot"] = ml.Boot?.BootKind,
+                    ["needs"] = ml.Needs, ["needs_why"] = ml.NeedsWhy, ["loader"] = ml.Loader, ["loader_version"] = ml.LoaderVersion, ["boot"] = ml.Boot?.BootKind,
                     ["scripts"] = addons.Cast<object>().ToList(),
                     ["broken"] = ml.Broken.Select(b => (object)new Dictionary<string, object>
                     {
                         ["script"] = b.Name ?? (b.Id == LuaMods.BootId ? "boot" : b.Id.ToString("x16")),
-                        ["line"] = (long)(b.Error?.Line ?? 0), ["message"] = b.Error?.Message,
+                        ["line"] = (long)(b.Error?.Line ?? 0), ["message"] = b.Error?.Message, ["error_kind"] = b.ErrorKind,
                         ["jit"] = b.Jit.Cast<object>().ToList(), ["luajit_bytecode"] = b.LuaJitBytecode,
                     }).ToList(),
                     ["pack_of"] = ml.PackOf?.Id, ["pack_of_name"] = ml.PackOfName,

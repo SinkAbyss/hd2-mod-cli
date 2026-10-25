@@ -201,10 +201,10 @@ mod's files and never chooses for you.
 | What it checks | What you see |
 |---|---|
 | **Start-up scripts** | Which mod's `boot` the game runs, and whose does not. A mod whose `boot` does not run has **Use this mod's start-up script** in its details: it moves the mod right after the one that runs now. |
-| **The loader each mod needs** | Read from the script's first lines. `-- HD2-Addon:` starts on Boot Mod Loader or Chef Shared Loader; `-- HD2-Requires: chef-shared-loader` (or `-- HD2-Boot:`) only on Chef Shared Loader. The list says when no loader is on, when a mod needs one that is not in effect, and when two loaders are on. |
-| **Scripts the game's Lua cannot run** | Since the 2026-10-20 update the game runs plain Lua 5.1, without LuaJIT. A script that does not compile (goto, LuaJIT's `ULL` numbers, Lua 5.2+ operators, a BOM, more than 200 locals or 60 upvalues in a function, and the rest), LuaJIT bytecode, or `ffi`, `bit` or `jit` used with no fallback is marked **Cannot run**. The syntax check follows PUC Lua 5.1's own lexer and parser; it agreed with PUC Lua 5.1 on all 15,394 scripts it was compared on (`tests/lua_syntax_vs_puc.py`). Comments and strings never count. |
+| **The loader each mod needs** | Read from the script's first lines. `-- HD2-Addon:` starts on Boot Mod Loader or Chef Shared Loader; `-- HD2-Requires: chef-shared-loader` (or `-- HD2-Boot:`) only on Chef Shared Loader. The details name only the loaders your library has. The list says when no loader is on, when a mod needs one that is not in effect, and when two loaders are on. |
+| **Scripts the game's Lua cannot run** | Since the 2026-10-20 update the game runs plain Lua 5.1, without LuaJIT. A script that does not compile (goto, LuaJIT's `ULL` numbers, Lua 5.2+ operators, a BOM, more than 200 locals or 60 upvalues in a function, and the rest), LuaJIT bytecode, or `ffi`, `bit` or `jit` used with no fallback is marked **Cannot run**, with what it uses (FFI, LuaJIT's 64-bit numbers, goto, …) and on what that judgement rests at present. The syntax check follows PUC Lua 5.1's own lexer and parser; it agreed with PUC Lua 5.1 on all 15,394 scripts it was compared on (`tests/lua_syntax_vs_puc.py`). Comments and strings never count. |
 | **Two mods with one name** | Two mods declaring the same `mods/<author>/<name>`: only the later one runs. |
-| **Translation packs** | A pack (the same author's folder, the mod's name and a language, wrapping the old menus' calls, as ActionCam简体中文 does) is one small line under the mod it translates, with its own tick. When that mod is off or not installed, the list says the translation does not apply. |
+| **Translation packs** | A pack (the same author's folder, the mod's name and a language, wrapping the old menus' calls, as ActionCam简体中文 does) is one small line under the mod it translates, with its own tick, and is kept right after that mod in the load order. When that mod is off or not installed, the list says the translation does not apply. |
 | **The last session** | Boot Mod Loader's log of the last launch: which mods started, how long each took, and which failed or did not compile, with the reason. |
 | **A crash** | When the game leaves a new crash dump, the left column shows when it crashed (the time the dump was written) and the mods this program had deployed then. |
 
@@ -475,10 +475,10 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 | 检查内容 | 显示方式 |
 |---|---|
 | **启动脚本** | 游戏运行的是哪个 mod 的 `boot`，哪些不会运行。启动脚本不会运行的 mod，详情中有 **改由此 mod 的启动脚本生效**：将该 mod 移到当前生效者之后。 |
-| **每个 MOD 需要的加载器** | 读取脚本开头几行。`-- HD2-Addon:` 可由 Boot Mod Loader 或 Chef Shared Loader 启动；`-- HD2-Requires: chef-shared-loader`（或 `-- HD2-Boot:`）仅能由 Chef Shared Loader 启动。没有启用加载器、需要的加载器未生效、同时启用两个加载器时，均会提示。 |
-| **游戏无法运行的脚本** | 2026-10-20 更新后，游戏使用 Lua 5.1，不再是 LuaJIT。无法编译的脚本（goto、LuaJIT 的 `ULL` 数字、Lua 5.2 及以后的运算符、BOM、单个函数超过 200 个局部变量或 60 个上值等）、LuaJIT 字节码、以及没有备用方案地使用 `ffi`、`bit`、`jit` 的脚本，标为 **无法运行**。语法检查按照 PUC Lua 5.1 自身的词法和语法分析器实现，与 PUC Lua 5.1 对比的 15,394 个脚本结论全部一致（`tests/lua_syntax_vs_puc.py`）。注释与字符串中的内容不计。 |
+| **每个 MOD 需要的加载器** | 读取脚本开头几行。`-- HD2-Addon:` 可由 Boot Mod Loader 或 Chef Shared Loader 启动；`-- HD2-Requires: chef-shared-loader`（或 `-- HD2-Boot:`）仅能由 Chef Shared Loader 启动。详情中只列出库中已有的加载器。没有启用加载器、需要的加载器未生效、同时启用两个加载器时，均会提示。 |
+| **游戏无法运行的脚本** | 2026-10-20 更新后，游戏使用 Lua 5.1，不再是 LuaJIT。无法编译的脚本（goto、LuaJIT 的 `ULL` 数字、Lua 5.2 及以后的运算符、BOM、单个函数超过 200 个局部变量或 60 个上值等）、LuaJIT 字节码、以及没有备用方案地使用 `ffi`、`bit`、`jit` 的脚本，标为 **无法运行**，并说明它用到了什么（FFI、LuaJIT 的 64 位整数写法、goto 等），以及这一判断目前依据的情况。语法检查按照 PUC Lua 5.1 自身的词法和语法分析器实现，与 PUC Lua 5.1 对比的 15,394 个脚本结论全部一致（`tests/lua_syntax_vs_puc.py`）。注释与字符串中的内容不计。 |
 | **同名 MOD** | 两个 mod 声明同一个 `mods/<作者>/<名称>` 时，只有加载顺序靠后的那个会运行。 |
-| **翻译包** | 翻译包（与原 mod 同一作者目录、名称为原 mod 名加语言后缀，并包装旧菜单的登记调用，例如 ActionCam简体中文）显示为原 mod 下方的一行小字，带有自己的勾选框。原 mod 未启用或未安装时，提示翻译不会生效。 |
+| **翻译包** | 翻译包（与原 mod 同一作者目录、名称为原 mod 名加语言后缀，并包装旧菜单的登记调用，例如 ActionCam简体中文）显示为原 mod 下方的一行小字，带有自己的勾选框，并在加载顺序中保持紧接在原 mod 之后。原 mod 未启用或未安装时，提示翻译不会生效。 |
 | **上一局** | Boot Mod Loader 上次启动游戏时的日志：哪些 mod 已启动、各自用时，以及哪些启动失败或无法编译，并附原因。 |
 | **崩溃** | 游戏留下新的崩溃转储时，左侧显示崩溃时间（转储文件的写入时间）以及当时本程序部署的 mod。 |
 

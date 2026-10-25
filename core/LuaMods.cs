@@ -22,6 +22,10 @@ namespace Hd2Mod
         public bool Bytecode, LuaJitBytecode;
         /// <summary>Where it does not compile on Lua 5.1, else null.</summary>
         public (int Line, string Message)? Error;
+        /// <summary>What the error is, in words a player can follow: "luajit_number" (0x...ULL),
+        /// "goto" (goto and labels), "new_operator" (//, &amp;, |, ~, &lt;&lt;, &gt;&gt;), "bom", "locals",
+        /// "upvalues", else "syntax".</summary>
+        public string ErrorKind;
         /// <summary>LuaJIT libraries it uses without a fallback: "ffi", "bit", "jit".</summary>
         public List<string> Jit = new List<string>();
         /// <summary>For the script "boot": whose it is ("bml", "chef_stub", "chef", "bsl", "other") and its version.</summary>
@@ -40,6 +44,9 @@ namespace Hd2Mod
         /// <summary>"any" (Boot Mod Loader or Chef Shared Loader), "chef" (Chef Shared Loader
         /// only), null (no mod script).</summary>
         public string Needs;
+        /// <summary>For Needs "chef": "declared" (HD2-Requires or HD2-Boot) or "name" (a name Boot
+        /// Mod Loader's pattern does not take).</summary>
+        public string NeedsWhy;
         public LuaScript Boot => Scripts.FirstOrDefault(s => s.Id == LuaMods.BootId);
         /// <summary>The loader's version, from its boot or Chef's core.</summary>
         public string LoaderVersion => Scripts.Select(s => s.BootVersion).FirstOrDefault(v => v != null);
@@ -93,7 +100,7 @@ namespace Hd2Mod
 
         // what was found in each archive, kept between runs in lua_scan.json by the archive's
         // size and time; a new version of the checks reads every archive again
-        const int ScanVersion = 1;
+        const int ScanVersion = 2;
         static Dictionary<string, (string Sig, List<LuaScript> Scripts)> disk;
         static bool diskDirty;
 
@@ -154,7 +161,7 @@ namespace Hd2Mod
                         LuaJitBytecode = Json.Bool(x, "luajit_bytecode"), BootKind = Json.Str(x, "boot_kind"), BootVersion = Json.Str(x, "version"),
                         WrapsMenus = Json.Bool(x, "wraps_menus"), Jit = Json.List(x, "jit").OfType<string>().ToList(),
                     };
-                    if (Json.Str(x, "error") != null) s.Error = ((int)Json.Long(x, "line"), Json.Str(x, "error"));
+                    if (Json.Str(x, "error") != null) { s.Error = ((int)Json.Long(x, "line"), Json.Str(x, "error")); s.ErrorKind = Json.Str(x, "error_kind"); }
                     return s;
                 }).ToList();
                 disk[kv.Key] = (Json.Str(f, "sig"), scripts);
@@ -178,7 +185,7 @@ namespace Hd2Mod
                             ["id"] = s.Id.ToString("x16"), ["header"] = s.Header, ["name"] = s.Name, ["bml"] = s.BmlName, ["chef_only"] = s.ChefOnly,
                             ["bytecode"] = s.Bytecode, ["luajit_bytecode"] = s.LuaJitBytecode, ["boot_kind"] = s.BootKind, ["version"] = s.BootVersion,
                             ["wraps_menus"] = s.WrapsMenus, ["jit"] = s.Jit.Cast<object>().ToList(),
-                            ["line"] = (long)(s.Error?.Line ?? 0), ["error"] = s.Error?.Message,
+                            ["line"] = (long)(s.Error?.Line ?? 0), ["error"] = s.Error?.Message, ["error_kind"] = s.ErrorKind,
                         }).ToList(),
                     };
                 diskDirty = false;
@@ -216,6 +223,7 @@ namespace Hd2Mod
             }
             s.ChefOnly = head.Substring(0, Math.Min(head.Length, 1200)).IndexOf("\n-- HD2-Requires: chef-", StringComparison.Ordinal) >= 0;
             s.Error = LuaSyntax.Check(body);
+            if (s.Error != null) s.ErrorKind = KindOf(s.Error.Value, body);
             if (s.Error == null)
             {
                 var tokens = LuaSyntax.Tokens(body);
@@ -234,6 +242,22 @@ namespace Hd2Mod
                 if (v.Success) s.BootVersion = v.Groups[1].Value;
             }
             return s;
+        }
+
+        /// <summary>The kind of a syntax error, from its message and the line it is on.</summary>
+        static string KindOf((int Line, string Message) e, byte[] body)
+        {
+            var msg = e.Message;
+            if (body.Length >= 3 && body[0] == 0xEF && body[1] == 0xBB && body[2] == 0xBF && e.Line == 1) return "bom";
+            if (msg.Contains("local variables")) return "locals";
+            if (msg.Contains("upvalues")) return "upvalues";
+            if (msg.StartsWith("malformed number") && Regex.IsMatch(msg, @"(?i)\d[0-9a-f]*(u?ll|i)'$")) return "luajit_number";
+            var lines = Encoding.UTF8.GetString(body).Split('\n');
+            var line = e.Line >= 1 && e.Line <= lines.Length ? lines[e.Line - 1] : "";
+            var code = Regex.Replace(line, @"--.*$|""(?:[^""\\]|\\.)*""|'(?:[^'\\]|\\.)*'", "");
+            if (Regex.IsMatch(code, @"\bgoto\s+[A-Za-z_]|::[A-Za-z_]\w*::")) return "goto";
+            if (Regex.IsMatch(code, @"//|<<|>>|[^~]~[^=]|(?<![A-Za-z0-9_\]\)\s])&|\s&\s|\s\|\s")) return "new_operator";
+            return "syntax";
         }
 
         static string Latin(byte[] b, int max)
@@ -371,7 +395,10 @@ namespace Hd2Mod
                 {
                     var mods = ml.Scripts.Where(s => s.Header == "Addon" || s.Header == "Boot").ToList();
                     if (mods.Count > 0)
+                    {
                         ml.Needs = mods.Any(s => s.ChefOnly || s.Header == "Boot" || !s.BmlName) ? "chef" : "any";
+                        if (ml.Needs == "chef") ml.NeedsWhy = mods.Any(s => s.ChefOnly || s.Header == "Boot") ? "declared" : "name";
+                    }
                 }
                 out_.Add(ml);
             }

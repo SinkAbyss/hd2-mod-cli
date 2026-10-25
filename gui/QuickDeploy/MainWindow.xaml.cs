@@ -927,6 +927,7 @@ namespace QuickDeploy
                     Mark("state parsed");
                     Render();
                     Mark("rendered");
+                    if (!st.LuaPending) AdjoinPacks();
                     if (timing != null) Dispatcher.BeginInvoke(new Action(() => Mark("drawn")), DispatcherPriority.ContextIdle);
                     if (st.LuaPending) WarmLua();
                 } while (refreshAgain);
@@ -941,6 +942,28 @@ namespace QuickDeploy
 
         bool setupDone;
         bool warming;
+
+        // the packs moved this run: each once, so nothing can go round in a loop
+        readonly HashSet<string> adjoined = new HashSet<string>();
+
+        /// <summary>A translation pack goes right after the mod it translates in the load order
+        /// (the user, 2026-10-26: "直接调整和原来的mod挨着", a deploy is quick). After, not before:
+        /// that is how ActionCam简体中文 ran in game (BML 0.11.0, 2026-10-25). One move a read; the
+        /// read the move brings does the next.</summary>
+        void AdjoinPacks()
+        {
+            if (st == null || busy || fromSaved) return;
+            foreach (var p in st.Mods.Where(x => x.Lu?.PackOf != null))
+            {
+                var of = ById(p.Lu.PackOf);
+                if (of == null || p.Index == of.Index + 1) continue;
+                if (st.ProfilesOn && p.InProfile != of.InProfile) continue;      // not in one profile: not one place
+                if (!adjoined.Add(p.Id)) continue;
+                lastDone = Texts.F("pack_moved", p.Name, of.Name);   // the bottom line says it after the read
+                Run("move", p.Id, "--after", of.Id);
+                return;
+            }
+        }
 
         // the last state read, kept when the window closes; the list it showed, drawn at once at
         // the next start while the library and the game folder are read again (the user,
@@ -1247,6 +1270,12 @@ namespace QuickDeploy
 
         ModRow ById(string id) => id == null ? null : st.Mods.FirstOrDefault(x => x.Id == id);
 
+        /// <summary>The library's loaders of these kinds, by name and version; one that is off says so.</summary>
+        string[] LibraryLoaders(string[] kinds) =>
+            st.Mods.Where(x => x.Lu?.Loader != null && kinds.Contains(x.Lu.Loader))
+                   .Select(x => LoaderLabel(x.Lu.Loader, x.Lu.LoaderVersion) + (x.Enabled ? "" : Texts.Get("lua_off_suffix")))
+                   .Distinct().ToArray();
+
         /// <summary>The loader running now, by name; null when none.</summary>
         string RunningLabel()
         {
@@ -1317,10 +1346,15 @@ namespace QuickDeploy
                     box.Children.Add(use);
                 }
             }
-            // what starts it, and whether that is what runs
+            // what starts it: only the loaders the library has, never a list of every loader
+            // there is (the user, 2026-10-26: others may come)
             if (lu.Needs != null)
             {
-                Line(Texts.Get(lu.Needs == "chef" ? "lua_needs_chef" : "lua_needs_any"), "Muted");
+                var able = LibraryLoaders(lu.Needs == "chef" ? new[] { "chef" } : new[] { "bml", "chef", "bsl" });
+                if (lu.Needs == "chef")
+                    Line(Texts.F(able.Length > 0 ? (lu.NeedsWhy == "declared" ? "lua_needs_chef_declared" : "lua_needs_chef_have") : (lu.NeedsWhy == "declared" ? "lua_needs_chef_declared_none" : "lua_needs_chef_none"),
+                                 string.Join("、", able)), "Muted");
+                else Line(able.Length > 0 ? Texts.F("lua_needs_any_have", string.Join("、", able)) : Texts.Get("lua_needs_any_none"), "Muted");
                 if (m.Enabled)
                 {
                     var issues = IssuesOf(m).ToList();
@@ -1338,17 +1372,37 @@ namespace QuickDeploy
                     }
                 }
             }
-            // what the game's Lua cannot run
+            // what the game's Lua cannot run: what each script uses, then on what that rests, said as
+            // what holds now (the game's Lua since the update, the loaders the library has), not as
+            // what can never change (the user, 2026-10-26)
             if (lu.Broken.Count > 0)
             {
                 Line(Texts.Get("lua_broken"), "Red", true);
                 foreach (var b in lu.Broken)
                 {
-                    string text = b.Message != null ? Texts.F("lua_broken_line", b.Script, b.Line, b.Message)
-                        : b.LuaJitBytecode ? Texts.F("lua_broken_bytecode", b.Script)
-                        : Texts.F("lua_broken_jit", b.Script, string.Join(", ", b.Jit));
+                    string text;
+                    if (b.Message != null)
+                        text = b.Kind != null && b.Kind != "syntax" && Texts.Has("lua_kind_" + b.Kind) ? Texts.F("lua_kind_" + b.Kind, b.Script, b.Line)
+                             : Texts.F("lua_broken_line", b.Script, b.Line, b.Message);
+                    else if (b.LuaJitBytecode) text = Texts.F("lua_kind_bytecode", b.Script);
+                    else text = Texts.F("lua_broken_uses", b.Script, string.Join("、", b.Jit.Select(j => Texts.Get("lua_use_" + j))));
                     box.Children.Add(new TextBlock { Text = "· " + text, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = B("Ink"), Margin = new Thickness(0, 1, 0, 1) });
                 }
+                bool libs = lu.Broken.Any(b => b.Jit.Count > 0), code = lu.Broken.Any(b => b.Message != null || b.LuaJitBytecode);
+                var basis = new List<string>();
+                if (code) basis.Add(Texts.Get("lua_basis_code"));
+                if (libs)
+                {
+                    basis.Add(Texts.Get("lua_basis_libs"));
+                    // each loader in the library, as far as it is known what it gives
+                    var known = st.Mods.Where(x => x.Lu?.Loader == "bml" || x.Lu?.Loader == "chef").Select(x => LoaderLabel(x.Lu.Loader, x.Lu.LoaderVersion)).Distinct().ToList();
+                    if (known.Count > 0) basis.Add(Texts.F("lua_basis_loaders", string.Join("、", known)));
+                    foreach (var x in st.Mods.Where(x => x.Lu?.Loader == "bsl"))
+                        if (lu.Broken.Any(b => b.Jit.Contains("ffi"))) basis.Add(Texts.F("lua_basis_bsl", LoaderLabel("bsl", x.Lu.LoaderVersion)));
+                    foreach (var x in st.Mods.Where(x => x.Lu?.Boot == "other"))
+                        basis.Add(Texts.F("lua_basis_unknown", x.Name));
+                }
+                box.Children.Add(Small(string.Join(Texts.Zh ? "" : " ", basis), new Thickness(0, 6, 0, 0)));   // Chinese sentences take no space between them
             }
             // a translation pack, and the packs of a mod
             if (lu.PackOfName != null)
