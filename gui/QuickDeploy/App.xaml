@@ -23,6 +23,8 @@
     <SolidColorBrush x:Key="Blue" Color="{StaticResource CBlue}"/>
     <SolidColorBrush x:Key="TapeInk" Color="{StaticResource CTapeInk}"/>
     <SolidColorBrush x:Key="Red" Color="{StaticResource CRed}"/>
+    <!-- every other row of a list in a card: faint, so a name and its number on the far side pair up -->
+    <SolidColorBrush x:Key="Band" Color="#0FFFFFFF"/>
 
     <!-- Latin and figures in Bahnschrift (the design's Chakra Petch is not on
          players' machines), Chinese falling back to YaHei UI; values mono -->

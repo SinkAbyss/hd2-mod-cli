@@ -448,6 +448,31 @@ namespace QuickDeploy
                 g.Start();
                 return;
             }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "dltime")
+            {
+                // "dltime": how long the download page takes to draw, written down
+                var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                g.Tick += (s, e) =>
+                {
+                    g.Stop();
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    ShowPage("download");
+                    UpdateLayout();
+                    var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                    var said = "download page drawn in " + clock.ElapsedMilliseconds + " ms";
+                    var list = Downloads.Children.OfType<Border>().Select(b => b.Child).OfType<ScrollViewer>().FirstOrDefault(v => v.MaxHeight == 470);
+                    if (list != null)
+                    {
+                        int Rows() => ((Panel)list.Content).Children.Count;
+                        said += "\nrows at first: " + Rows();
+                        for (int i = 0; i < 30; i++) { list.ScrollToEnd(); UpdateLayout(); }
+                        said += "\nrows after scrolling to the end: " + Rows();
+                    }
+                    if (path != null) try { File.WriteAllText(path, said); } catch (IOException) { }
+                };
+                g.Start();
+                return;
+            }
             if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "menutoggle")
             {
                 // "menutoggle": the labels menu opened, then closed by the press on its own button
@@ -1247,6 +1272,17 @@ namespace QuickDeploy
         static string Exe => System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
 
 
+        /// <summary>A row of a list on a faint band every other row, so a name on the left and its
+        /// number on the right pair up at a glance (the user, 2026-10-25). In a card the band runs
+        /// to the card's edges; in a list that scrolls, to the list's.</summary>
+        Border Band(UIElement row, int index, bool toCardEdges = true) => new Border
+        {
+            Background = index % 2 == 1 ? B("Band") : Brushes.Transparent,
+            Margin = toCardEdges ? new Thickness(-16, 0, -16, 0) : new Thickness(0),
+            Padding = toCardEdges ? new Thickness(16, 0, 16, 0) : new Thickness(8, 0, 8, 0),
+            Child = row,
+        };
+
         Border Card(UIElement child) =>
             new Border { BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(16), Child = child };
 
@@ -1420,7 +1456,8 @@ namespace QuickDeploy
             ticked.RemoveWhere(id => sel.Mods.All(m => m.Id != id));
             Storages.Children.Add(new Border { Height = 12 });
             var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-            var moveBtn = new Button { Content = Texts.F("st_move_n", ticked.Count), Style = (Style)FindResource(ticked.Count > 0 ? "Primary" : "Ghost"), MinHeight = 40, IsEnabled = ticked.Count > 0 };
+            // plain, as "Open its folder": moving is not the page's main act (the user, 2026-10-25)
+            var moveBtn = new Button { Content = Texts.F("st_move_n", ticked.Count), Style = (Style)FindResource("Ghost"), MinHeight = 40, IsEnabled = ticked.Count > 0 };
             moveBtn.Click += (s, e) =>
             {
                 // no other library folder: a menu of one choice is a click for nothing (the user, 2026-10-25)
@@ -1486,6 +1523,7 @@ namespace QuickDeploy
             var shown = storageSort == "name"
                 ? sel.Mods.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList()
                 : sel.Mods.OrderByDescending(x => sizes.TryGetValue(x.Id ?? "", out var b) ? b : 0L).ToList();
+            int band = 0;
             foreach (var m in shown)
             {
                 var id = m.Id;
@@ -1505,7 +1543,7 @@ namespace QuickDeploy
                 line.Children.Add(words);
                 box.Content = line;
                 box.Click += (s, e) => { if (box.IsChecked == true) ticked.Add(id); else ticked.Remove(id); RenderStorage(); };
-                list.Children.Add(box);
+                list.Children.Add(Band(box, band++));
             }
             Storages.Children.Add(Card(list));
             OldVersions();
@@ -1572,6 +1610,7 @@ namespace QuickDeploy
             bar.Children.Add(every);
             box.Children.Add(bar);
             if (Texts.Hints) box.Children.Add(Small(Texts.Get("st_old_note"), new Thickness(0, 0, 0, 10)));
+            int oldBand = 0;
             foreach (var l in left)
             {
                 var path = l.Path;
@@ -1598,7 +1637,7 @@ namespace QuickDeploy
                     if (tick.IsChecked == true) oldPick.Add(path); else oldPick.Remove(path);
                     RenderStorage();
                 };
-                box.Children.Add(tick);
+                box.Children.Add(Band(tick, oldBand++));
             }
             Storages.Children.Add(Card(box));
         }
@@ -3931,6 +3970,7 @@ namespace QuickDeploy
 
             var carry = new StackPanel();
             if (members.Count == 0) carry.Children.Add(Small(Texts.Get("tag_empty"), new Thickness(0, 0, 0, 0)));
+            int memberBand = 0;
             foreach (var m in members)
             {
                 var row = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
@@ -3961,7 +4001,7 @@ namespace QuickDeploy
                 DockPanel.SetDock(pic, Dock.Left);
                 row.Children.Add(pic);
                 row.Children.Add(new TextBlock { Text = m.Name, FontWeight = FontWeights.SemiBold, FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) });
-                carry.Children.Add(row);
+                carry.Children.Add(Band(row, memberBand++));
             }
             right.Children.Add(Panel(carry, new Thickness(0, 0, 0, 16)));
 
@@ -4054,7 +4094,8 @@ namespace QuickDeploy
             var every = new CheckBox
             {
                 Style = (Style)FindResource("Tick"), IsChecked = hits.All(m => tagPick.Contains(m.Id)), VerticalAlignment = VerticalAlignment.Center,
-                Content = new TextBlock { Text = Texts.Get("pick_all"), FontSize = 12, Foreground = B("Ink") }, Margin = new Thickness(0, 0, 16, 0),
+                Content = new TextBlock { Text = Texts.Get("pick_all"), FontSize = 12, Foreground = B("Ink") },
+                Margin = new Thickness(8, 0, 16, 0),      // in line with the rows' ticks, inside their bands
             };
             every.Click += (s, e) =>
             {
@@ -4067,6 +4108,7 @@ namespace QuickDeploy
             foot.Children.Add(count);
 
             var rows = new StackPanel();
+            int hitBand = 0;
             foreach (var m in hits)
             {
                 var row = new DockPanel();
@@ -4096,7 +4138,7 @@ namespace QuickDeploy
                     put.IsEnabled = tagPick.Count > 0;
                     every.IsChecked = hits.All(x => tagPick.Contains(x.Id));
                 };
-                rows.Children.Add(box);
+                rows.Children.Add(Band(box, hitBand++, false));
             }
             tagHits.Children.Add(new ScrollViewer
             {
