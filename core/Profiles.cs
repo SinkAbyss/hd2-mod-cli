@@ -188,6 +188,33 @@ namespace Hd2Mod
             return n;
         }
 
+        /// <summary>Profiles imported from another manager added, their names made unique. With
+        /// profiles on already, the one in use stays in use (an import never changes the game on
+        /// its own); else the one named inUse (else the first) is put in use.</summary>
+        public static List<Profile> AddImported(Library lib, List<Profile> made, string inUse, string from = null)
+        {
+            if (made.Count == 0) return made;
+            bool keep = lib.ProfilesOn;
+            if (keep) InUse(lib);
+            foreach (var p in made)
+            {
+                var name = p.Name.Trim().Length > 0 ? p.Name.Trim() : "Profile";
+                // a name the library has already: the manager's after it, then a number
+                var unique = name;
+                if (from != null && lib.Profiles.Any(x => Same(x.Name, unique))) unique = name + " (" + from + ")";
+                for (int n = 2; lib.Profiles.Any(x => Same(x.Name, unique)); n++) unique = name + " (" + (from != null ? from + " " : "") + n + ")";
+                if (Same(p.Name, inUse)) inUse = unique;
+                p.Name = unique;
+                lib.Profiles.Add(p);
+            }
+            lib.ProfilesOn = true;
+            if (!keep) Apply(lib, made.FirstOrDefault(x => Same(x.Name, inUse)) ?? made[0]);
+            // the mods the import brought are outside the profile in use: off, as every such mod is
+            else foreach (var m in lib.Mods) if (!lib.Members.Contains(m.Id)) m.Enabled = false;
+            lib.KnowAll();
+            return made;
+        }
+
         public static void Rename(Library lib, string name, string to)
         {
             var p = Find(lib, name);

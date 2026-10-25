@@ -49,6 +49,8 @@ namespace Hd2Mod
         /// <summary>A picture of the mod that the manager it came from keeps outside the mod's
         /// folder, to be copied in when the mod is added (Importers.CopyPictures); not kept.</summary>
         public string ImportPicture;
+        /// <summary>The mod's id in the manager it is imported from, while it is imported; not kept.</summary>
+        public string ImportKey;
     }
 
     /// <summary>Where a mod came from on Nexus Mods: its mod, the file it is (0 when unknown), that
@@ -82,6 +84,10 @@ namespace Hd2Mod
         public string Active;
         public HashSet<string> Members;
         HashSet<string> known;
+
+        /// <summary>Every mod the library has now counts as known: mods an import put into chosen
+        /// profiles must not also go into the profile in use when the library is saved.</summary>
+        public void KnowAll() => known = new HashSet<string>(Mods.Select(m => m.Id));
 
         public static Library Load()
         {

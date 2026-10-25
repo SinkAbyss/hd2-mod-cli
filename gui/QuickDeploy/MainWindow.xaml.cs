@@ -2003,6 +2003,16 @@ namespace QuickDeploy
             if (loose.Count > 0) items.Add(Texts.F("lf_loose", loose.Count));
             var pick = Dialog.Ticks(this, Texts.Get(folder != null ? "lf_ask" : firstStart ? "im_ask_first" : "im_ask"), items.ToArray(), Texts.Get("arsenal_import"));
             if (pick == null || !pick.Any(x => x)) return;
+            // managers that keep several profiles: all of them as profiles, or each one's in use (the user, 2026-10-25)
+            var several = found.Where((x, k) => pick[k] && x.ProfileNames.Count > 1).ToList();
+            bool allProfiles = false;
+            if (several.Count > 0)
+            {
+                var which = string.Join("\n", several.Select(x => Texts.F("im_profiles_line", x.Name, string.Join("、", x.ProfileNames))));
+                int how = Dialog.Choose(this, Texts.F("im_profiles_ask", which), Texts.Get("im_profiles_all"), Texts.Get("im_profiles_one"), Texts.Get("cancel"));
+                if (how != 0 && how != 1) return;
+                allProfiles = how == 0;
+            }
             var before = new HashSet<string>(Library.Load().Mods.Select(m => m.Id));
             var lines = new List<string>();
             // where each mod just added came from: 1, 2, ... one per manager (0, already here)
@@ -2011,7 +2021,10 @@ namespace QuickDeploy
             for (int i = 0; i < found.Count; i++)
             {
                 if (!pick[i]) continue;
-                var r = await Exec(found[i].Dir != null ? new[] { "import-" + found[i].Key, "--dir", found[i].Dir } : new[] { "import-" + found[i].Key });
+                var args = new List<string> { "import-" + found[i].Key };
+                if (found[i].Dir != null) { args.Add("--dir"); args.Add(found[i].Dir); }
+                if (allProfiles && found[i].ProfileNames.Count > 1) args.Add("--profiles");
+                var r = await Exec(args.ToArray());
                 lines.Add(r.Ok ? Last(r.Out.Split('\n').FirstOrDefault() ?? "") : Texts.F("failed", r.Message));
                 foreach (var m in Library.Load().Mods)
                     if (!before.Contains(m.Id) && !group.ContainsKey(m.Id)) group[m.Id] = i + 1;

@@ -728,6 +728,65 @@ namespace Hd2Mod.Tests
             Assert.DoesNotContain("other way round", Cli("import-arsenal", "--file", arsenal, "--replace"));
         }
 
+        /// <summary>Every profile of another manager comes in as a profile of its own, with its
+        /// mods, order and on/off (the user, 2026-10-25). The library's own mods stay a profile
+        /// Default, which stays in use; a name taken already gets the manager's after it.</summary>
+        [Fact]
+        public void OtherManagersProfilesComeInAsProfiles()
+        {
+            Cli("add", Mod("Mine", Files(("1111222233334444.patch_0", "mine"))));
+            var one = Mod("One", Files((A + ".patch_0", "one")));
+            var two = Mod("Two", Files((B + ".patch_0", "two")));
+            Dictionary<string, object> Entry(string uuid, string label, string path, bool on) =>
+                new Dictionary<string, object> { ["uuid"] = uuid, ["label"] = label, ["path"] = path, ["enabled"] = on, ["options"] = new List<object>() };
+            var arsenal = Path.Combine(Root, "hd2a_data.json");
+            File.WriteAllText(arsenal, J(new Dictionary<string, object>
+            {
+                ["deployedProfile"] = "q", ["profileOrder"] = new List<object> { "p", "q" }, ["userGameDir"] = Game, ["modsList"] = new Dictionary<string, object>
+                {
+                    ["p"] = new Dictionary<string, object> { ["label"] = "Main", ["mods"] = new List<object> { Entry("u1", "One", one, true), Entry("u2", "Two", two, false) } },
+                    ["q"] = new Dictionary<string, object> { ["label"] = "Bunny", ["mods"] = new List<object> { Entry("u3", "Two", two, true) } },
+                },
+            }), new UTF8Encoding(false));
+            Cli("import-arsenal", "--file", arsenal, "--profiles");
+            var lib = Library.Load();
+            string Name(string id) => lib.Mods.First(m => m.Id == id).Name;
+            string Show(string profile)
+            {
+                var p = lib.Profiles.First(x => x.Name == profile);
+                return string.Join(" ", p.Order.Select(id => Name(id) + (p.On.Contains(id) ? "+" : "-")));
+            }
+            Assert.Equal(new[] { "Default", "Main", "Bunny" }, lib.Profiles.Select(p => p.Name).ToArray());
+            Assert.Equal("Default", lib.Active);                       // an import never changes the game on its own
+            Assert.Equal(new[] { "mine" }, PlanList());
+            Assert.Equal("One+ Two-", Show("Main"));
+            Assert.Equal("Two+", Show("Bunny"));
+            Assert.Equal(3, lib.Mods.Count);                           // Two once, though in both profiles
+
+            // Echelon: its "Main" meets ours
+            var dir = Path.Combine(Root, "Echelon");
+            Directory.CreateDirectory(dir);
+            var file = Path.Combine(dir, "library.json");
+            var three = Mod("Three", Files(("5555666677778888.patch_0", "three")));
+            string Mod_(string id, string name, string folder) => "{\"id\": \"" + id + "\", \"name\": \"" + name + "\", \"folder\": " +
+                                                                  Json.Write(folder) + ", \"enabled\": true, \"deployed\": true, \"sets\": [], \"options\": []}";
+            File.WriteAllText(file, "{\"format\": \"echelon-library\", \"version\": 1, \"mods\": [" +
+                Mod_("e1", "One", one) + ", " + Mod_("e3", "Three", three) + "]}", new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(dir, "state.json"),
+                "{\"version\": 2, \"active_profile\": \"p2\", \"profiles\": [" +
+                "{\"id\": \"p1\", \"name\": \"Other\", \"entries\": [{\"type\": \"mod\", \"id\": \"e3\", \"enabled\": true}]}," +
+                "{\"id\": \"p2\", \"name\": \"Main\", \"entries\": [{\"type\": \"mod\", \"id\": \"e3\", \"enabled\": false}, {\"type\": \"mod\", \"id\": \"e1\", \"enabled\": true}]}]}",
+                new UTF8Encoding(false));
+            Cli("import-echelon", "--file", file, "--profiles");
+            lib = Library.Load();
+            Assert.Equal(new[] { "Default", "Main", "Bunny", "Other", "Main (Echelon)" }, lib.Profiles.Select(p => p.Name).ToArray());
+            Assert.Equal("Default", lib.Active);
+            Assert.Equal("Three- One+", Show("Main (Echelon)"));       // One is the mod Arsenal brought, not a second copy
+            Assert.Equal(4, lib.Mods.Count);
+            // the mods the imports brought are in the library, not in the profile in use
+            Assert.Equal(new[] { "Mine" }, lib.Mods.Where(m => Profiles.InProfile(lib, m)).Select(m => m.Name).ToArray());
+        }
+
         /// <summary>Mods from another manager meet the ones already in the library for the first
         /// time: the import says how many pairs of them conflict, and only then (the user,
         /// 2026-10-25).</summary>

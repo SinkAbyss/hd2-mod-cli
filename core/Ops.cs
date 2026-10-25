@@ -367,7 +367,8 @@ namespace Hd2Mod
                                    .Select(s => new SubChoice { Name = Json.Str(s, "name") ?? "", Enabled = Truthy(s, "enabled", false) }).ToList(),
                     });
                 var p = Json.Str(m, "path");
-                if (p == null) throw new ModError("a mod in " + path + " has no path");
+                // an entry without a folder is no mod to bring (one in the user's Default Profile, 2026-10-25)
+                if (p == null) continue;
                 lib.Mods.Add(new Mod
                 {
                     Id = First(Json.Str(m, "uuid"), Guid.NewGuid().ToString()),

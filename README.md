@@ -135,6 +135,9 @@ their size, and whether it is on the game's drive.
   The list's title is the profile in use and opens the others, the mod library
   (where a mod is put into the profile, or taken out, from its right-click menu)
   and making, renaming and deleting profiles. Switching deploys at once.
+  When HD2 Arsenal or Echelon keeps several profiles, the import asks whether
+  to bring in every one as a profile of its own or only the one in use there.
+  An import never changes the profile in use.
 - **Game folder** (at the top): where the game is and whether Helldivers 2 is
   really there. *Change…* chooses it by hand; *Find automatically* looks in the
   Steam libraries on this computer.
@@ -222,7 +225,7 @@ A change made on the command line shows in an open window half a second later.
 | Command | What it does |
 |---|---|
 | `init [--game DIR] [--mods-dir DIR]` | Set the game folder (found automatically when left out; the game folder, its `data` or its `bin`) and where zips are unpacked. |
-| `import-arsenal [--file F] [--profile ID] [--replace]` | Add HD2 Arsenal's deployed profile to the library: names, folders, order, on/off, options; mods already in it are skipped (`--replace`: the library becomes HD2 Arsenal's). Mods stay in HD2 Arsenal's folders. |
+| `import-arsenal [--file F] [--profile ID \| --profiles] [--replace]` | Add HD2 Arsenal's deployed profile to the library: names, folders, order, on/off, options; mods already in it are skipped (`--replace`: the library becomes HD2 Arsenal's). Mods stay in HD2 Arsenal's folders. `--profiles`: every profile, each a profile here with its own mods, order, on/off and options; the profile in use stays in use. |
 | `list [--files] [--paths]` | The load order, top to bottom. The last one wins. `--files` shows each mod's patch files as they would be numbered. |
 | `add PATH [--name N] [--copy]` | Add a mod at the bottom: a zip (unpacked once into the library folder) or a folder (used where it is, so a mod you are building can be deployed straight from its build folder). |
 | `replace MOD PATH` | A new version of a mod: same place in the order, the same options by name. |
@@ -231,7 +234,7 @@ A change made on the command line shows in an open window half a second later.
 | `update MOD` | Download a mod's newer version from its GitHub releases and put it in its place. |
 | `source MOD URL` / `source MOD --clear` | Set where a mod comes from: a Nexus Mods page, a GitHub repository or another page. |
 | `import-hd2mm [--dir DIR] [--replace]` | Add HD2ModManager's mods, order, on/off and options to the library (read only; its folder-name and object options both). |
-| `import-echelon [--file FILE] [--replace]` | Add Echelon's mods, on/off and options from its own library.json, in its active profile's order (read only). |
+| `import-echelon [--file FILE] [--profiles] [--replace]` | Add Echelon's mods, on/off and options from its own library.json, in its active profile's order (read only). `--profiles`: every profile, each with its own mods, order and on/off; the option choices are the active profile's, the only ones Echelon's files hold. |
 | `folders` | The mod folders: the default, the ones added, and the folders mods are in, with their drives. |
 | `folder-add PATH [--import]` / `folder-remove PATH` / `folder-default PATH` | Add a library folder and say which other managers' lists and which other mods it holds (`--import` brings them in), take one off the list (its files stay), choose the default. |
 | `folder-path PATH NEW` / `add-loose PATH` | A library folder is somewhere else now: it and its mods follow. Add the mod folders in a library folder that no manager lists, where they are. |
@@ -405,7 +408,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 **存储** 页按照 Steam 游戏库文件夹的方式列出存放 mod 的文件夹，每个文件夹显示所在分区、可用空间、其中的 mod 数量与大小，以及是否与游戏位于同一分区。
 
-- **配置文件**（在设置中开启，默认关闭）：mod 库保存全部 mod，每个配置文件包含其中一部分，并有各自的加载顺序、开关与可选内容。列表标题即当前配置，点击可切换配置、查看 mod 库（右键 mod 可加入或移出当前配置），以及新建、重命名、删除配置。切换后立即部署。
+- **配置文件**（在设置中开启，默认关闭）：mod 库保存全部 mod，每个配置文件包含其中一部分，并有各自的加载顺序、开关与可选内容。列表标题即当前配置，点击可切换配置、查看 mod 库（右键 mod 可加入或移出当前配置），以及新建、重命名、删除配置。切换后立即部署。HD2 Arsenal 或 Echelon 有多个配置时，导入前会询问：将全部配置分别导入为配置文件，还是只导入其当前使用的配置。导入不会更换当前使用的配置。
 - **游戏目录**（最上方）：显示游戏位置，以及该位置是否确为 Helldivers 2。“更改…”可手动选择；“自动识别”会在本机的 Steam 库中查找。
 - **默认文件夹**：添加的 zip 放入此处。“设为默认”可更换默认文件夹；“从列表移除”仅将添加的文件夹移出列表，其中的文件保留。
 - **添加库文件夹…**：添加文件夹后，像 Steam 识别游戏库文件夹一样检查其中内容。其他管理器存放在此的 mod（HD2 Arsenal、HD2ModManager——即使其存储目录已更改——以及 Echelon）会按该管理器的列表导入，加载顺序、开关与可选内容一并保留；其他 mod 文件夹则原地加入。库中已有的 mod 不会重复加入。

@@ -13,6 +13,25 @@ namespace Hd2Mod
         public int Mods;
         /// <summary>HD2ModManager's storage folder when it is not in its usual place, else null.</summary>
         public string Dir;
+        /// <summary>The manager's profiles, when it keeps more than one; else empty.</summary>
+        public List<string> ProfileNames = new List<string>();
+    }
+
+    /// <summary>One of another manager's profiles: its mods (the ones of ImportedProfiles.All), in
+    /// its order, each with its on/off and options there.</summary>
+    public class ImportedProfile
+    {
+        public string Name;
+        public List<(Mod Mod, bool On, List<OptionChoice> Options)> Mods = new List<(Mod, bool, List<OptionChoice>)>();
+    }
+
+    /// <summary>Another manager's profiles: every mod in any of them, once (All), each profile, and
+    /// the one in use there.</summary>
+    public class ImportedProfiles
+    {
+        public Library All = new Library();
+        public List<ImportedProfile> Profiles = new List<ImportedProfile>();
+        public string InUse;
     }
 
     /// <summary>Other mod managers' lists, read only, merged into the library: a mod already in
@@ -131,6 +150,7 @@ namespace Hd2Mod
                     Options = options, Layout = layout,
                 });
                 theirIds.Add(Json.Str(m, "id") ?? "");
+                lib.Mods[lib.Mods.Count - 1].ImportKey = Json.Str(m, "id");
             }
             // What library.json leaves out is in Echelon's own state.json. It is Echelon's own
             // file, not one written for other tools, so a version not known here leaves it unread.
@@ -266,13 +286,120 @@ namespace Hd2Mod
             }
         }
 
+        /// <summary>HD2 Arsenal's profiles, every one of them (the user, 2026-10-25: all of a
+        /// manager's profiles come in, not only the one in use): each read as the import reads
+        /// the one in use, so its order turns round when Arsenal gives its first mod the highest
+        /// priority.</summary>
+        public static ImportedProfiles ArsenalProfiles(string path = null)
+        {
+            path = path ?? Store.ArsenalFile();
+            if (path == null) throw new ModError("HD2 Arsenal's hd2a_data.json was not found", "no_source");
+            var d = Store.ReadJson(path) as Dictionary<string, object> ?? new Dictionary<string, object>();
+            var list = Json.Obj(d, "modsList") ?? new Dictionary<string, object>();
+            var keys = Json.List(d, "profileOrder").OfType<string>().Concat(list.Keys).Distinct().Where(list.ContainsKey).ToList();
+            var inUseKey = Json.Str(d, "deployedProfile") ?? Json.Str(d, "selectedProfile");
+            var result = new ImportedProfiles { All = new Library { ImportedFrom = "HD2 Arsenal" } };
+            var byPath = new Dictionary<string, Mod>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in keys)
+            {
+                var lib = Ops.ImportArsenal(path, key).Lib;
+                var name = Json.Str(Json.Obj(list, key), "label") ?? key;
+                var one = new ImportedProfile { Name = name };
+                foreach (var m in lib.Mods)
+                {
+                    var k = Paths.Abs(m.Path).TrimEnd('\\');
+                    if (!byPath.TryGetValue(k, out var b)) { byPath[k] = b = m; result.All.Mods.Add(m); }
+                    one.Mods.Add((b, m.Enabled, m.Options));
+                }
+                result.Profiles.Add(one);
+                if (key == inUseKey) result.InUse = name;
+            }
+            return result;
+        }
+
+        /// <summary>Echelon's profiles: each one's order and on/off from its own state.json; the
+        /// option choices are the ones library.json has, the profile in use's (no other profile's
+        /// were seen in its files, 2026-10-25). Null when state.json cannot be read.</summary>
+        public static ImportedProfiles EchelonProfiles(string file = null)
+        {
+            file = file ?? EchelonFile();
+            var all = ReadEchelon(file);
+            var state = EchelonState(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file)), "state.json"));
+            if (state == null) return null;
+            var byKey = new Dictionary<string, Mod>();
+            foreach (var m in all.Mods) if (m.ImportKey != null && !byKey.ContainsKey(m.ImportKey)) byKey[m.ImportKey] = m;
+            var result = new ImportedProfiles { All = all };
+            var inUseId = Json.Str(state, "active_profile") ?? Json.Str(state, "deployed_profile");
+            foreach (var p in Json.List(state, "profiles").OfType<Dictionary<string, object>>())
+            {
+                var one = new ImportedProfile { Name = Json.Str(p, "name") ?? Json.Str(p, "id") ?? "Echelon" };
+                foreach (var e in Json.List(p, "entries").OfType<Dictionary<string, object>>().Where(e => Json.Str(e, "type") == "mod"))
+                    if (byKey.TryGetValue(Json.Str(e, "id") ?? "", out var m)) one.Mods.Add((m, Json.Bool(e, "enabled", true), m.Options));
+                result.Profiles.Add(one);
+                if (Json.Str(p, "id") == inUseId) result.InUse = one.Name;
+            }
+            return result.Profiles.Count > 0 ? result : null;
+        }
+
+        /// <summary>The library's mod an imported one is: the same folder, manifest Guid or name
+        /// (as Merge decides), else null.</summary>
+        static Mod Match(Library lib, Mod m)
+        {
+            string GuidOf(string folder)
+            {
+                try { return Directory.Exists(folder) ? Manifest.Read(folder)?.Guid : null; }
+                catch (ModError) { return null; }
+            }
+            var path = Paths.Abs(m.Path).TrimEnd('\\');
+            var hit = lib.Mods.FirstOrDefault(x => string.Equals(Paths.Abs(x.Path).TrimEnd('\\'), path, StringComparison.OrdinalIgnoreCase));
+            if (hit != null) return hit;
+            var g = GuidOf(m.Path);
+            if (!string.IsNullOrEmpty(g)) hit = lib.Mods.FirstOrDefault(x => string.Equals(GuidOf(x.Path), g, StringComparison.OrdinalIgnoreCase));
+            return hit ?? lib.Mods.FirstOrDefault(x => string.Equals(x.Name, m.Name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Another manager's profiles into the library: their mods merged (none twice),
+        /// then each profile made one of ours, with its mods, order, on/off and options, and the
+        /// one in use there put in use here.</summary>
+        public static (List<Mod> Added, List<Mod> Skipped, List<Profile> Made) MergeWithProfiles(Library into, ImportedProfiles imp)
+        {
+            var (added, skipped) = Merge(into, imp.All);
+            var addedSet = new HashSet<Mod>(added);
+            var mine = new Dictionary<Mod, Mod>();
+            foreach (var m in imp.All.Mods) mine[m] = addedSet.Contains(m) ? m : Match(into, m);
+            var made = new List<Profile>();
+            foreach (var ip in imp.Profiles)
+            {
+                var p = new Profile { Name = ip.Name };
+                foreach (var (m, on, options) in ip.Mods)
+                {
+                    if (!mine.TryGetValue(m, out var lm) || lm == null || p.Order.Contains(lm.Id)) continue;
+                    p.Order.Add(lm.Id);
+                    if (on) p.On.Add(lm.Id);
+                    p.Options[lm.Id] = options.Select(o => new OptionChoice
+                    {
+                        Name = o.Name, Enabled = o.Enabled,
+                        Subs = o.Subs.Select(s => new SubChoice { Name = s.Name, Enabled = s.Enabled }).ToList(),
+                    }).ToList();
+                }
+                made.Add(p);
+            }
+            Profiles.AddImported(into, made, imp.InUse, imp.All.ImportedFrom);
+            return (added, skipped, made);
+        }
+
         /// <summary>The managers found, with how many mods each lists.</summary>
         public static List<ImportSource> Found()
         {
             var out_ = new List<ImportSource>();
             if (Store.ArsenalFile() != null)
             {
-                try { out_.Add(new ImportSource { Key = "arsenal", Name = "HD2 Arsenal", Where = Store.ArsenalModsDir() ?? Store.ArsenalFile(), Mods = Ops.ImportArsenal().Lib.Mods.Count }); }
+                try
+                {
+                    var names = ArsenalProfiles().Profiles.Select(p => p.Name).ToList();
+                    out_.Add(new ImportSource { Key = "arsenal", Name = "HD2 Arsenal", Where = Store.ArsenalModsDir() ?? Store.ArsenalFile(), Mods = Ops.ImportArsenal().Lib.Mods.Count,
+                                                ProfileNames = names.Count > 1 ? names : new List<string>() });
+                }
                 catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException) { }
             }
             var mm = Hd2mmDir();
@@ -288,7 +415,9 @@ namespace Hd2Mod
                 {
                     var theirs = ReadEchelon(ec);
                     var where = theirs.Mods.Count > 0 ? Path.GetDirectoryName(theirs.Mods[0].Path.TrimEnd('\\')) ?? ec : ec;
-                    out_.Add(new ImportSource { Key = "echelon", Name = "Echelon", Where = where, Mods = theirs.Mods.Count });
+                    var names = EchelonProfiles(ec)?.Profiles.Select(p => p.Name).ToList() ?? new List<string>();
+                    out_.Add(new ImportSource { Key = "echelon", Name = "Echelon", Where = where, Mods = theirs.Mods.Count,
+                                                ProfileNames = names.Count > 1 ? names : new List<string>() });
                 }
                 catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException) { }
             }

@@ -40,12 +40,12 @@ namespace Hd2Mod
         {
             Cmd("init", new Spec { Help = "set the game folder (found from HD2 Arsenal or Steam when left out)",
                                    Values = new[] { "--game", "--mods-dir" }, Run = Init }),
-            Cmd("import-arsenal", new Spec { Help = "add HD2 Arsenal's mods, order, on/off and options to the library (read only; mods already in it stay; --replace: the library becomes HD2 Arsenal's)",
-                                             Values = new[] { "--file", "--profile" }, Flags = new[] { "--replace" }, Run = ImportArsenal }),
+            Cmd("import-arsenal", new Spec { Help = "add HD2 Arsenal's mods, order, on/off and options to the library (read only; mods already in it stay; --replace: the library becomes HD2 Arsenal's; --profiles: every profile, each one of ours)",
+                                             Values = new[] { "--file", "--profile" }, Flags = new[] { "--replace", "--profiles" }, Run = ImportArsenal }),
             Cmd("import-hd2mm", new Spec { Help = "add HD2ModManager's mods, order, on/off and options to the library (read only; mods already in it stay)",
                                            Values = new[] { "--dir" }, Flags = new[] { "--replace" }, Run = ImportHd2mm }),
-            Cmd("import-echelon", new Spec { Help = "add Echelon's mods, order, on/off and options to the library (read only; mods already in it stay)",
-                                             Values = new[] { "--file" }, Flags = new[] { "--replace" }, Run = ImportEchelon }),
+            Cmd("import-echelon", new Spec { Help = "add Echelon's mods, order, on/off and options to the library (read only; mods already in it stay; --profiles: every profile, each one of ours)",
+                                             Values = new[] { "--file" }, Flags = new[] { "--replace", "--profiles" }, Run = ImportEchelon }),
             Cmd("folders", new Spec { Help = "the mod folders: the default (where new mods go), the ones added, and those mods are in", Run = FoldersCmd }),
             Cmd("folder-add", new Spec { Help = "add a library folder, and say which other managers' lists and which mods not in the library it holds (--import: bring them in)",
                                          Positionals = new[] { "path" }, Flags = new[] { "--import" }, Run = FolderAdd }),
@@ -287,6 +287,11 @@ namespace Hd2Mod
 
         static void ImportArsenal(Args a, TextWriter o)
         {
+            if (a.Flag("--profiles"))
+            {
+                ImportProfiles(Importers.ArsenalProfiles(a.Value("--file")), a.Flag("--replace"), "HD2 Arsenal", o);
+                return;
+            }
             var (theirs, g) = Ops.ImportArsenal(a.Value("--file"), a.Value("--profile"));
             Import(theirs, a.Flag("--replace"), "HD2 Arsenal", o,
                    Ops.ArsenalTopWins(a.Value("--file"))
@@ -345,7 +350,33 @@ namespace Hd2Mod
 
         static void ImportHd2mm(Args a, TextWriter o) => Import(Importers.ReadHd2mm(a.Value("--dir")), a.Flag("--replace"), "HD2ModManager", o);
 
-        static void ImportEchelon(Args a, TextWriter o) => Import(Importers.ReadEchelon(a.Value("--file")), a.Flag("--replace"), "Echelon", o);
+        static void ImportEchelon(Args a, TextWriter o)
+        {
+            var profiles = a.Flag("--profiles") ? Importers.EchelonProfiles(a.Value("--file")) : null;
+            if (profiles != null) ImportProfiles(profiles, a.Flag("--replace"), "Echelon", o);
+            else Import(Importers.ReadEchelon(a.Value("--file")), a.Flag("--replace"), "Echelon", o);
+        }
+
+        /// <summary>Another manager's profiles, every one, into the library (the user, 2026-10-25).
+        /// A library that had mods and no profiles keeps them as a profile Default first.</summary>
+        static void ImportProfiles(ImportedProfiles imp, bool replace, string who, TextWriter o)
+        {
+            var lib = replace ? new Library() : Library.Load();
+            bool hadMods = lib.Mods.Count > 0;
+            if (hadMods && !lib.ProfilesOn) Profiles.TurnOn(lib);
+            var (added, skipped, made) = Importers.MergeWithProfiles(lib, imp);
+            foreach (var m in added) Importers.CopyPictures(m);
+            lib.Save();
+            o.WriteLine(added.Count + " mods added from " + who + ", " + skipped.Count + " already in the library. " + who + "'s files were only read.");
+            foreach (var p in made)
+                o.WriteLine((string.Equals(p.Name, lib.Active, StringComparison.CurrentCultureIgnoreCase) ? "* " : "  ") + "profile " + p.Name +
+                            "  (" + p.Order.Count + " mods, " + p.On.Count + " on)");
+            int cross = hadMods && added.Count > 0 ? Importers.CrossClashes(lib, added.ToDictionary(m => m.Id, m => 1)) : 0;
+            if (cross > 0)
+                o.WriteLine(cross + (cross == 1 ? " conflict" : " conflicts") + " between mods from " + who +
+                            " and mods already in the library: the one lower in the list, from " + who + ", wins. See them with: hd2qd conflicts");
+            o.WriteLine("From now on deploy with hd2qd only: a deploy from " + who + " would undo this one's.");
+        }
 
         /// <summary>Another manager's list into the library: added (the mods not in it yet), or, with
         /// replace, instead of it.</summary>
