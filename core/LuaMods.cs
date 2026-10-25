@@ -84,13 +84,32 @@ namespace Hd2Mod
         static readonly Dictionary<string, (string Sig, List<LuaScript> Scripts)> known =
             new Dictionary<string, (string, List<LuaScript>)>(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>The Lua scripts of one patch archive, read once while it is unchanged.</summary>
-        public static List<LuaScript> Read(string path)
+        /// <summary>The window's: a state read takes only the archives already read (in this run
+        /// or in lua_scan.json), so the list is never kept waiting; the rest is read in the
+        /// background (Warm) and the state read again. Reading and checking every script of a
+        /// library of 65 mods took 0.94 s, which held the list back at every start (the user,
+        /// 2026-10-26: "明显没以前快了"). The command line reads everything.</summary>
+        public static bool Lazy;
+
+        // what was found in each archive, kept between runs in lua_scan.json by the archive's
+        // size and time; a new version of the checks reads every archive again
+        const int ScanVersion = 1;
+        static Dictionary<string, (string Sig, List<LuaScript> Scripts)> disk;
+        static bool diskDirty;
+
+        /// <summary>The Lua scripts of one patch archive, read once while it is unchanged; with
+        /// knownOnly, null when it would have to be read now.</summary>
+        public static List<LuaScript> Read(string path, bool knownOnly = false)
         {
             var fi = new FileInfo(path);
             var sig = fi.Length + ":" + fi.LastWriteTimeUtc.Ticks;
             lock (known)
+            {
                 if (known.TryGetValue(path, out var k) && k.Sig == sig) return k.Scripts;
+                LoadDisk();
+                if (disk.TryGetValue(path, out var d) && d.Sig == sig) { known[path] = d; return d.Scripts; }
+            }
+            if (knownOnly) return null;
             var out_ = new List<LuaScript>();
             if (Deploy.Types(path).Contains(Deploy.LuaType))
                 using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
@@ -104,9 +123,78 @@ namespace Hd2Mod
                         Array.Copy(data, 8, body, 0, n);
                         out_.Add(Look(r.Id, body));
                     }
-            lock (known) known[path] = (sig, out_);
+            lock (known)
+            {
+                known[path] = (sig, out_);
+                disk[path] = (sig, out_);
+                diskDirty = true;
+            }
             return out_;
         }
+
+        static void LoadDisk()
+        {
+            if (disk != null) return;
+            disk = new Dictionary<string, (string, List<LuaScript>)>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, object> d;
+            try { d = Store.Load("lua_scan.json"); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is FormatException) { return; }
+            if (Json.Long(d, "version") != ScanVersion) return;
+            var files = Json.Obj(d, "files");
+            if (files == null) return;
+            foreach (var kv in files)
+            {
+                if (!(kv.Value is Dictionary<string, object> f)) continue;
+                var scripts = Json.List(f, "scripts").OfType<Dictionary<string, object>>().Select(x =>
+                {
+                    var s = new LuaScript
+                    {
+                        Id = ulong.Parse(Json.Str(x, "id") ?? "0", NumberStyles.HexNumber), Header = Json.Str(x, "header"), Name = Json.Str(x, "name"),
+                        BmlName = Json.Bool(x, "bml"), ChefOnly = Json.Bool(x, "chef_only"), Bytecode = Json.Bool(x, "bytecode"),
+                        LuaJitBytecode = Json.Bool(x, "luajit_bytecode"), BootKind = Json.Str(x, "boot_kind"), BootVersion = Json.Str(x, "version"),
+                        WrapsMenus = Json.Bool(x, "wraps_menus"), Jit = Json.List(x, "jit").OfType<string>().ToList(),
+                    };
+                    if (Json.Str(x, "error") != null) s.Error = ((int)Json.Long(x, "line"), Json.Str(x, "error"));
+                    return s;
+                }).ToList();
+                disk[kv.Key] = (Json.Str(f, "sig"), scripts);
+            }
+        }
+
+        /// <summary>What was read, kept for the next run; only the archives seen are kept.</summary>
+        static void SaveDisk(HashSet<string> seen)
+        {
+            Dictionary<string, object> files;
+            lock (known)
+            {
+                if (!diskDirty && (disk == null || disk.Keys.All(seen.Contains))) return;
+                files = new Dictionary<string, object>();
+                foreach (var kv in disk.Where(kv => seen.Contains(kv.Key)))
+                    files[kv.Key] = new Dictionary<string, object>
+                    {
+                        ["sig"] = kv.Value.Sig,
+                        ["scripts"] = kv.Value.Scripts.Select(s => (object)new Dictionary<string, object>
+                        {
+                            ["id"] = s.Id.ToString("x16"), ["header"] = s.Header, ["name"] = s.Name, ["bml"] = s.BmlName, ["chef_only"] = s.ChefOnly,
+                            ["bytecode"] = s.Bytecode, ["luajit_bytecode"] = s.LuaJitBytecode, ["boot_kind"] = s.BootKind, ["version"] = s.BootVersion,
+                            ["wraps_menus"] = s.WrapsMenus, ["jit"] = s.Jit.Cast<object>().ToList(),
+                            ["line"] = (long)(s.Error?.Line ?? 0), ["error"] = s.Error?.Message,
+                        }).ToList(),
+                    };
+                diskDirty = false;
+            }
+            try { Store.Save("lua_scan.json", new Dictionary<string, object> { ["version"] = (long)ScanVersion, ["files"] = files }); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+        }
+
+        /// <summary>Tests only: as if the program started again (what is on disk stays).</summary>
+        internal static void ForgetRun()
+        {
+            lock (known) { known.Clear(); disk = null; diskDirty = false; }
+        }
+
+        /// <summary>Every archive read that was not yet, and kept: the window's background reading.</summary>
+        public static void Warm(Library lib) => Of(lib, false, out _);
 
         /// <summary>One script's facts from its bytes.</summary>
         public static LuaScript Look(ulong id, byte[] body)
@@ -247,8 +335,14 @@ namespace Hd2Mod
 
         /// <summary>Each mod's Lua, from the folders a deploy would take (its chosen options),
         /// whether it is on or not. Mods with no Lua at all are left out.</summary>
-        public static List<ModLua> Of(Library lib)
+        public static List<ModLua> Of(Library lib) => Of(lib, false, out _);
+
+        /// <summary>The same; with knownOnly, the archives not yet read are left out and counted
+        /// in missing (the answer is then incomplete, and not to be shown).</summary>
+        public static List<ModLua> Of(Library lib, bool knownOnly, out int missing)
         {
+            missing = 0;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var out_ = new List<ModLua>();
             foreach (var m in lib.Mods)
             {
@@ -259,7 +353,14 @@ namespace Hd2Mod
                 var ml = new ModLua { Mod = m };
                 foreach (var folder in folders.Where(Directory.Exists))
                     foreach (var f in Deploy.List(folder).Where(f => Deploy.Patch.IsMatch(f)))
-                        try { ml.Scripts.AddRange(Read(Paths.Join(folder, f))); }
+                        try
+                        {
+                            var path = Paths.Join(folder, f);
+                            seen.Add(path);
+                            var scripts = Read(path, knownOnly);
+                            if (scripts == null) missing++;
+                            else ml.Scripts.AddRange(scripts);
+                        }
                         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
                 if (ml.Scripts.Count == 0) continue;
                 var boot = ml.Boot;
@@ -275,6 +376,7 @@ namespace Hd2Mod
                 out_.Add(ml);
             }
             Packs(out_);
+            if (!knownOnly) SaveDisk(seen);
             return out_;
         }
 

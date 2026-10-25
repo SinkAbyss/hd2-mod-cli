@@ -131,8 +131,12 @@ namespace Hd2Mod
         static Dictionary<string, object> LuaBlock(Library lib, List<object> mods)
         {
             List<ModLua> all;
-            try { all = LuaMods.Of(lib); }
+            int missing;
+            try { all = LuaMods.Of(lib, LuaMods.Lazy, out missing); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return null; }
+            // some archives not read yet (the window reads them in the background): nothing
+            // half known is said
+            if (missing > 0) return new Dictionary<string, object> { ["pending"] = true };
             var (owner, boots, running, issues) = LuaMods.Check(lib, all);
             var session = LuaMods.LastSession();
             var byId = all.ToDictionary(x => x.Mod.Id);

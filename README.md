@@ -208,7 +208,7 @@ mod's files and never chooses for you.
 | **The last session** | Boot Mod Loader's log of the last launch: which mods started, how long each took, and which failed or did not compile, with the reason. |
 | **A crash** | When the game leaves a new crash dump, the left column shows when it crashed (the time the dump was written) and the mods this program had deployed then. |
 
-All of it is read outside the game, before a deploy: nothing runs in the game.
+All of it is read outside the game, before a deploy: nothing runs in the game. The list never waits for it: what was found is kept in `lua_scan.json`, and an archive not read yet is read in the background, its findings shown a moment later.
 
 ### Good to know
 
@@ -315,6 +315,7 @@ Everything is kept in `%USERPROFILE%\.hd2-mod-cli` (`HD2MOD_HOME` overrides it):
 | `same.json` | Large files already compared, so they are not read again. |
 | `gui.json` | The window's own settings (its language, which way the list is shown, the explaining lines). |
 | `deploy_history.json` | When each of the last 50 deploys ran and which mods it put in the game, so that a crash can be matched with them. |
+| `lua_scan.json` | What each patch archive's Lua scripts were found to be, by the archive's size and time, so a start does not read and check them again. |
 | `self_update.json` | The last check of this program's own releases, and whether the window checks by itself (at most once a day). |
 | `*.json.bak` | The version each file had before the last save. Mods can be downloaded again; what you chose — the mods, their order, their options, their labels — cannot, and it is a few kilobytes. To go back, rename the `.bak` over the file. |
 
@@ -479,7 +480,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 | **上一局** | Boot Mod Loader 上次启动游戏时的日志：哪些 mod 已启动、各自用时，以及哪些启动失败或无法编译，并附原因。 |
 | **崩溃** | 游戏留下新的崩溃转储时，左侧显示崩溃时间（转储文件的写入时间）以及当时本程序部署的 mod。 |
 
-以上检查均在游戏外、部署前完成，不在游戏中运行任何内容。
+以上检查均在游戏外、部署前完成，不在游戏中运行任何内容。列表不会因此等待：检查结果保存在 `lua_scan.json` 中，尚未读取的文件在后台读取，结果稍后显示。
 
 ### 注意事项
 

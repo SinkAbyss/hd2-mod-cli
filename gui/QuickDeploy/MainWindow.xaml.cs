@@ -138,6 +138,7 @@ namespace QuickDeploy
 
         void Start()
         {
+            LuaMods.Lazy = true;                       // the list first; the mods' scripts after (WarmLua)
             Watch();
             Refresh();
             ClickTest();
@@ -895,6 +896,7 @@ namespace QuickDeploy
                     try { st = Cli.ReadState(r.Out); }
                     catch (FormatException e) { Foot(Texts.F("failed", e.Message), "Yellow"); return; }
                     Render();
+                    if (st.LuaPending) WarmLua();
                 } while (refreshAgain);
             }
             finally { refreshing = false; }
@@ -906,6 +908,19 @@ namespace QuickDeploy
         }
 
         bool setupDone;
+        bool warming;
+
+        /// <summary>The mods' scripts read in the background, once, then the state read again:
+        /// the list never waits for them (the user, 2026-10-26).</summary>
+        async void WarmLua()
+        {
+            if (warming) return;
+            warming = true;
+            try { await Task.Run(() => LuaMods.Warm(Library.Load())); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ModError) { }
+            finally { warming = false; }
+            Refresh();
+        }
 
         /// <summary>The first start, in the window and never on a command line: the game
         /// folder (found from HD2 Arsenal's or Steam's settings, else chosen), then, with

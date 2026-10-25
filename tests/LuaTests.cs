@@ -235,6 +235,37 @@ namespace Hd2Mod.Tests
             finally { LuaMods.GameFolderOverride = null; }
         }
 
+        /// <summary>The window's list never waits for the scripts (the user, 2026-10-26: the start
+        /// was slower): a state read with Lazy says the Lua facts are pending until the archives
+        /// are read in the background, and the next run finds them in lua_scan.json.</summary>
+        [Fact]
+        public void TheListNeverWaitsForTheScripts()
+        {
+            Cli("add", Bml());
+            Cli("add", Addon("Lamp", "mods/me/lamp"));
+            LuaMods.ForgetRun();
+            LuaMods.Lazy = true;
+            try
+            {
+                string Lua() => Json.Write(((Dictionary<string, object>)Json.Parse(Cli("state")))["lua_check"]);
+                Assert.Contains("\"pending\":true", Lua().Replace(" ", ""));
+                LuaMods.Warm(Library.Load());
+                Assert.Contains("\"running\":\"bml\"", Lua().Replace(" ", ""));
+                Assert.True(File.Exists(Store.PathOf("lua_scan.json")));
+                // a new run: nothing read yet in memory, all of it on disk
+                LuaMods.ForgetRun();
+                Assert.Contains("\"running\":\"bml\"", Lua().Replace(" ", ""));
+                // an archive that changes is read again, not taken from the disk
+                var lamp = Library.Load().Mods.Single(m => m.Name == "Lamp").Path;
+                File.WriteAllBytes(Path.Combine(lamp, A + ".patch_0"), LuaArchive((A1, "-- HD2-Addon: mods/me/lamp\ngoto x ::x::\n")));
+                File.SetLastWriteTimeUtc(Path.Combine(lamp, A + ".patch_0"), DateTime.UtcNow.AddMinutes(1));
+                Assert.Contains("\"pending\":true", Lua().Replace(" ", ""));
+                LuaMods.Warm(Library.Load());
+                Assert.Contains("cannot_run", Lua());
+            }
+            finally { LuaMods.Lazy = false; }
+        }
+
         [Fact]
         public void ADeployIsRecordedForLaterCrashes()
         {

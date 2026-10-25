@@ -175,6 +175,8 @@ namespace QuickDeploy
         /// <summary>Whether resources can be named (HD2SDK's list was found).</summary>
         public bool ResourceNames;
         public LuaCheck Lua;
+        /// <summary>Some mods' scripts are not read yet: the Lua facts come with a later read.</summary>
+        public bool LuaPending;
         /// <summary>The folders of old versions left in the library folder.</summary>
         public List<Leftover> Leftovers = new List<Leftover>();
         /// <summary>The game folder against the library, as the last state read found it.</summary>
@@ -283,7 +285,8 @@ namespace QuickDeploy
                     Resources = List(c, "resources").OfType<Dictionary<string, object>>().Select(r => (Str(r, "type"), Str(r, "id"), Str(r, "name"))).ToList(),
                 });
             s.ResourceNames = Bool(d, "resource_names");
-            if (d.TryGetValue("lua_check", out var lcv) && lcv is Dictionary<string, object> lc)
+            if (d.TryGetValue("lua_check", out var lcp) && lcp is Dictionary<string, object> lcq && Bool(lcq, "pending")) s.LuaPending = true;
+            else if (d.TryGetValue("lua_check", out var lcv) && lcv is Dictionary<string, object> lc)
             {
                 var lua = new LuaCheck { BootOwner = Str(lc, "boot_owner"), BootKind = Str(lc, "boot_kind"), Running = Str(lc, "running") };
                 foreach (var id in List(lc, "boot_mods").OfType<string>()) lua.BootMods.Add(id);
