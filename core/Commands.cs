@@ -84,8 +84,8 @@ namespace Hd2Mod
             Cmd("update", new Spec { Help = "download a mod's newer release from GitHub and put it in the library", Positionals = new[] { "mod" }, Run = UpdateCmd }),
             Cmd("source", new Spec { Help = "set where a mod comes from: a Nexus Mods page, a GitHub repository, or another page (--clear: none)",
                                      Positionals = new[] { "mod" }, Many = true, Flags = new[] { "--clear" }, Run = SourceCmd }),
-            Cmd("delete", new Spec { Help = "delete a mod from the disk for good: out of the library and the game (a deploy), its folder deleted",
-                                     Positionals = new[] { "mod" }, Flags = new[] { "--yes" }, Run = DeleteCmd }),
+            Cmd("delete", new Spec { Help = "delete mods from the disk for good: out of the library and the game (one deploy), their folders deleted",
+                                     Positionals = new[] { "mods" }, Many = true, Flags = new[] { "--yes" }, Run = DeleteCmd }),
             Cmd("enable", new Spec { Help = "turn mods on", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => Switch(a, o, true) }),
             Cmd("disable", new Spec { Help = "turn mods off", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => Switch(a, o, false) }),
             Cmd("move", new Spec { Help = "move a mod in the load order", Positionals = new[] { "mod" },
@@ -697,13 +697,22 @@ namespace Hd2Mod
         static void DeleteCmd(Args a, TextWriter o)
         {
             var lib = Library.Load();
-            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            var mods = a.Rest.Select(x => Ops.Pick(lib, x)).Distinct().ToList();
             var g = Store.GameDir();
             if (!a.Flag("--yes"))
-                throw new ModError("this deletes " + Paths.Abs(mod.Path) + " for good and takes " + mod.Name + " out of the game: add --yes");
-            var (r, folder, bytes) = Ops.DeleteMod(lib, mod, g);
-            o.WriteLine("deleted " + mod.Name + ": out of the library; deploy kept " + r.Kept + ", moved " + r.Moved + ", deleted " + r.Deleted +
-                        "; folder " + folder + " deleted (" + bytes + " bytes)");
+                throw new ModError("this deletes " + string.Join(", ", mods.Select(m => Paths.Abs(m.Path))) + " for good and takes " +
+                                   string.Join(", ", mods.Select(m => m.Name)) + " out of the game: add --yes");
+            if (mods.Count == 1)
+            {
+                var (r, folder, bytes) = Ops.DeleteMod(lib, mods[0], g);
+                o.WriteLine("deleted " + mods[0].Name + ": out of the library; deploy kept " + r.Kept + ", moved " + r.Moved + ", deleted " + r.Deleted +
+                            "; folder " + folder + " deleted (" + bytes + " bytes)");
+                return;
+            }
+            var (rs, all, failed) = Ops.DeleteMods(lib, mods, g);
+            o.WriteLine("deleted " + (mods.Count - failed.Count) + " mods: out of the library; deploy kept " + rs.Kept + ", moved " + rs.Moved +
+                        ", deleted " + rs.Deleted + "; " + all + " bytes");
+            foreach (var f in failed) o.WriteLine("out of the library and the game, but its folder could not be deleted: " + f);
         }
 
         static void Switch(Args a, TextWriter o, bool on)

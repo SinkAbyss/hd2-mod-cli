@@ -294,6 +294,34 @@ namespace Hd2Mod
             return (r, folder, bytes);
         }
 
+        /// <summary>Several mods deleted from the disk at once (the Storage page's ticked mods; the
+        /// user, 2026-10-25: a page for seeing what takes space is where it gets deleted). Every
+        /// folder is checked before anything changes, one deploy takes them out of the game, then
+        /// the folders go. A folder that cannot be deleted is named; the others still go.</summary>
+        public static (DeployResult Deployed, long Bytes, List<string> Failed) DeleteMods(Library lib, IList<Mod> mods, string game)
+        {
+            var go = mods.Distinct().Select(m => (Mod: m, Folder: OwnFolder(lib, m, game))).ToList();
+            if (Deploy.GameRunning()) throw new ModError("the game is running: close it first", "game_running");
+            long bytes = 0;
+            foreach (var x in go)
+                if (Directory.Exists(x.Folder))
+                    foreach (var f in new DirectoryInfo(x.Folder).EnumerateFiles("*", SearchOption.AllDirectories)) bytes += f.Length;
+            foreach (var x in go) lib.Mods.Remove(x.Mod);
+            lib.Save();
+            var r = Deploy.Run(lib, game);
+            var failed = new List<string>();
+            foreach (var x in go)
+                try
+                {
+                    if (!Directory.Exists(x.Folder)) continue;
+                    foreach (var f in new DirectoryInfo(x.Folder).EnumerateFiles("*", SearchOption.AllDirectories))
+                        if ((f.Attributes & FileAttributes.ReadOnly) != 0) f.Attributes &= ~FileAttributes.ReadOnly;
+                    Directory.Delete(x.Folder, true);
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { failed.Add(x.Folder); }
+            return (r, bytes, failed);
+        }
+
         /// <summary>A mod by its number in `list` (from 1), its id, or a unique part of its name.</summary>
         public static Mod Pick(Library lib, string reference)
         {

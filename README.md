@@ -144,6 +144,8 @@ their size, and whether it is on the game's drive.
 - **Change path…**: a folder you moved yourself, or one on a drive that got
   another letter. The mods in it follow it; nothing on disk is moved.
 - Folders that mods are in are listed by themselves (HD2 Arsenal's, HD2ModManager's, Echelon's).
+- **Deleting mods**: choose a folder, tick its mods (the list is sorted by size
+  first), *Delete…*: their folders go, and they leave the library and the game.
 - **Moving mods**: choose a folder, tick its mods, *Move to…* another folder.
   *Move* deletes the old folders; *Copy* keeps them, for a manager that still
   uses them. Afterwards the window says how many were moved and where, and the
@@ -229,7 +231,7 @@ A change made on the command line shows in an open window half a second later.
 | `folder-add PATH [--import]` / `folder-remove PATH` / `folder-default PATH` | Add a library folder and say which other managers' lists and which other mods it holds (`--import` brings them in), take one off the list (its files stay), choose the default. |
 | `folder-path PATH NEW` / `add-loose PATH` | A library folder is somewhere else now: it and its mods follow. Add the mod folders in a library folder that no manager lists, where they are. |
 | `relocate MOD... --into FOLDER [--keep]` | Move mods into another mod folder (`--keep`: copy, the old folders stay); the game's copies of them become hard links. |
-| `delete MOD --yes` | Delete a mod from the disk for good: out of the library and the game (a deploy), its folder deleted. |
+| `delete MOD... --yes` | Delete mods from the disk for good: out of the library and the game (one deploy), their folders deleted. |
 | `enable MOD...` / `disable MOD...` | Turn mods on or off. |
 | `move MOD --top / --bottom / --to N / --before M / --after M` | Change the load order. |
 | `options MOD` | A mod's options and sub-options, numbered. |
@@ -400,6 +402,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 - **添加库文件夹…**：添加文件夹后，像 Steam 识别游戏库文件夹一样检查其中内容。其他管理器存放在此的 mod（HD2 Arsenal、HD2ModManager——即使其存储目录已更改——以及 Echelon）会按该管理器的列表导入，加载顺序、开关与可选内容一并保留；其他 mod 文件夹则原地加入。库中已有的 mod 不会重复加入。
 - **更改路径…**：文件夹被手动移动，或所在分区的盘符改变时使用。其中的 mod 会随之指向新位置，磁盘上的文件不做移动。
 - 含有 mod 的文件夹会自动列出（如 HD2 Arsenal、HD2ModManager、Echelon 的文件夹）。
+- **删除 mod**：选择文件夹，勾选其中的 mod（默认按大小排列），点击“删除…”：文件夹将被删除，这些 mod 也会从 mod 库与游戏中移除。
 - **移动 mod**：选择文件夹，勾选其中的 mod，点击“移动到…”并选择目标文件夹。“移动”将删除原文件夹；“复制”保留原文件夹，供仍在使用的其他管理器使用。完成后程序会说明移动的数量与位置，并将游戏目录中对应的复制件改为硬链接。
 
 **与游戏不在同一分区的 mod** 只能以复制方式部署：额外占用一份空间，每次变更都需重新写入。程序会在导入或添加文件夹后、以及存储页顶部提示此情况，并按选择处理：

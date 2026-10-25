@@ -443,6 +443,43 @@ namespace QuickDeploy
                         foreach (var m in (st?.Mods ?? new List<ModRow>()).Where(x => !Carries(x, tagSel, false)).Take(2))
                             tagPick.Add(m.Id);
                     RenderTags();
+                    Dispatcher.BeginInvoke(new Action(() => TagsPage.ScrollToEnd()), DispatcherPriority.Loaded);
+                };
+                g.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "menutoggle")
+            {
+                // "menutoggle": the labels menu opened, then closed by the press on its own button
+                // and that button's click at once; then a click later. Writes down what was open.
+                var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                g.Tick += (s, e) =>
+                {
+                    g.Stop();
+                    var said = new List<string>();
+                    void Click() => TagFilterBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, TagFilterBtn));
+                    Click();
+                    var first = lastMenu;
+                    said.Add("after the first click: open " + (first?.IsOpen == true));
+                    var g2 = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+                    g2.Tick += (s2, e2) =>
+                    {
+                        g2.Stop();
+                        first.IsOpen = false;          // the press outside closes it
+                        Click();                       // and the same click lands on the button
+                        said.Add("a click on its button while open: open " + (lastMenu?.IsOpen == true) + ", a new menu " + !ReferenceEquals(lastMenu, first));
+                        var g3 = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+                        g3.Tick += (s3, e3) =>
+                        {
+                            g3.Stop();
+                            Click();
+                            said.Add("a click later: open " + (lastMenu?.IsOpen == true));
+                            var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                            if (path != null) try { File.WriteAllLines(path, said); } catch (IOException) { }
+                        };
+                        g3.Start();
+                    };
+                    g2.Start();
                 };
                 g.Start();
                 return;
@@ -576,9 +613,15 @@ namespace QuickDeploy
                         TagsPage.ScrollToVerticalOffset(0); inner.ScrollToVerticalOffset(0); UpdateLayout();
                         Say("start");
                         Turn(1000); Say("one turn");
-                        for (int i = 0; i < 60; i++) Turn(50);
-                        Say("one long turn");
-                        Turn(600); Say("next turn");
+                        // one notch from the end, then the wheel kept turning, a notch each 50 ms
+                        inner.ScrollToVerticalOffset(inner.ScrollableHeight - 48); UpdateLayout();
+                        Turn(1000); Say("a turn to the end");
+                        for (int i = 0; i < 4; i++) Turn(50);
+                        Say("0.2 s more (held)");
+                        for (int i = 0; i < 4; i++) Turn(50);
+                        Say("0.4 s more (the page)");
+                        TagsPage.ScrollToVerticalOffset(0); UpdateLayout();
+                        Turn(600); Say("next turn, after a rest");
                         inner.MaxHeight = double.PositiveInfinity;
                         TagsPage.ScrollToVerticalOffset(0); UpdateLayout();
                         Say("no scroll on the list");
@@ -1379,6 +1422,13 @@ namespace QuickDeploy
             var moveBtn = new Button { Content = Texts.F("st_move_n", ticked.Count), Style = (Style)FindResource(ticked.Count > 0 ? "Primary" : "Ghost"), MinHeight = 40, IsEnabled = ticked.Count > 0 };
             moveBtn.Click += (s, e) =>
             {
+                // no other library folder: a menu of one choice is a click for nothing (the user, 2026-10-25)
+                if (!folders.Any(x => x != sel))
+                {
+                    var p = PickFolder("pick_move_title");
+                    if (p != null) MoveMods(sel.Mods.Where(m => ticked.Contains(m.Id)).ToList(), p);
+                    return;
+                }
                 var menu = new ContextMenu { PlacementTarget = moveBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
                 foreach (var other in folders.Where(x => x != sel))
                 {
@@ -1394,6 +1444,15 @@ namespace QuickDeploy
             };
             DockPanel.SetDock(moveBtn, Dock.Right);
             bar.Children.Add(moveBtn);
+            // the page for seeing what takes space is where it gets deleted (the user, 2026-10-25)
+            var delBtn = new Button
+            {
+                Content = Texts.F("st_delete_n", ticked.Count), Style = (Style)FindResource("Danger"), MinHeight = 40,
+                IsEnabled = ticked.Count > 0, Margin = new Thickness(0, 0, 8, 0),
+            };
+            delBtn.Click += (s, e) => DeleteTicked(sel.Mods.Where(m => ticked.Contains(m.Id)).ToList());
+            DockPanel.SetDock(delBtn, Dock.Right);
+            bar.Children.Add(delBtn);
             var how = SortBy(storageSort, k => { storageSort = k; RenderStorage(); },
                              ("size", Texts.Get("sort_size")), ("name", Texts.Get("sort_name")));
             ((FrameworkElement)how).Margin = new Thickness(0, 0, 12, 0);
@@ -1449,6 +1508,28 @@ namespace QuickDeploy
             OldVersions();
         }
 
+        /// <summary>The ticked mods deleted from the disk, after one question that names them and their size.</summary>
+        async void DeleteTicked(List<Mod> mods)
+        {
+            if (mods.Count == 0) return;
+            long size = mods.Sum(m => Directory.Exists(m.Path) ? StateDoc.LibraryBytes(new DirectoryInfo(m.Path)) : 0L);
+            var names = string.Join("\n", mods.Take(10).Select(m => "· " + m.Name)) + (mods.Count > 10 ? "\n…" : "");
+            if (!Dialog.AskDanger(this, Texts.F("st_delete_ask", mods.Count, Gb(size), names), Texts.Get("delete_btn"))) return;
+            var ids = mods.Select(m => m.Id).ToList();
+            var r = await Exec(() => Cli.Call(() =>
+            {
+                var lib = Library.Load();
+                var go = lib.Mods.Where(m => ids.Contains(m.Id)).ToList();
+                var (_, bytes, failed) = Ops.DeleteMods(lib, go, Store.GameDir());
+                var said = Texts.F("st_deleted_n", go.Count - failed.Count, Texts.Size(bytes));
+                return failed.Count == 0 ? said : said + "\n\n" + Texts.F("st_delete_failed", string.Join("\n", failed));
+            }));
+            ticked.Clear();
+            if (r.Ok) { if (r.Out.Contains("\n")) Dialog.Tell(this, r.Out); else Foot(r.Out, "Blue"); }
+            else if (!Refused(r)) Dialog.Tell(this, Texts.F("failed", r.Message));
+            Refresh();
+        }
+
         /// <summary>The folders older versions were unpacked into, which no mod uses any more:
         /// nothing for a small mod, hundreds of megabytes for an armour pack (the user,
         /// 2026-10-25). Ticked off and deleted here; the game is not touched.</summary>
@@ -1459,29 +1540,33 @@ namespace QuickDeploy
             Storages.Children.Add(Label("st_old", new Thickness(0, 20, 0, 6)));
             var box = new StackPanel();
             var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+            // one tick for all of them, as in the mod list; "Clear" beside "Select all" read as
+            // something else again (the user, 2026-10-25)
+            int picked = left.Count(l => oldPick.Contains(l.Path));
             var drop = new Button
             {
-                Content = Texts.Get("st_old_drop"), Style = (Style)FindResource("Ghost"), MinHeight = 34,
-                IsEnabled = left.Any(l => oldPick.Contains(l.Path)),
+                Content = picked > 0 ? Texts.F("st_old_drop_n", picked) : Texts.Get("st_old_drop"), Style = (Style)FindResource("Danger"), MinHeight = 34,
+                IsEnabled = picked > 0,
             };
             drop.Click += (s, e) => DropOldVersions();
             DockPanel.SetDock(drop, Dock.Right);
             bar.Children.Add(drop);
-            var none = new Button { Content = Texts.Get("tag_pick_none"), Style = (Style)FindResource("Ghost"), MinHeight = 34, Margin = new Thickness(0, 0, 8, 0) };
-            none.Click += (s, e) => { oldPick.Clear(); RenderStorage(); };
-            DockPanel.SetDock(none, Dock.Right);
-            bar.Children.Add(none);
-            var every = new Button { Content = Texts.Get("tag_pick_all"), Style = (Style)FindResource("Ghost"), MinHeight = 34, Margin = new Thickness(0, 0, 8, 0) };
-            every.Click += (s, e) => { foreach (var l in left) oldPick.Add(l.Path); RenderStorage(); };
-            DockPanel.SetDock(every, Dock.Right);
-            bar.Children.Add(every);
-            bar.Children.Add(new TextBlock
+            var every = new CheckBox
             {
-                Text = Texts.F("st_old_n", left.Count, Gb(left.Sum(l => l.Bytes))) +
-                       (oldPick.Any(x => left.Any(l => l.Path == x)) ? "  ·  " + Texts.F("tag_picked", left.Count(l => oldPick.Contains(l.Path))) : ""),
-                FontSize = 12, FontWeight = FontWeights.SemiBold,
-                Foreground = B("Muted"), VerticalAlignment = VerticalAlignment.Center,
-            });
+                Style = (Style)FindResource("Tick"), IsChecked = picked == left.Count, VerticalAlignment = VerticalAlignment.Center,
+                Content = new TextBlock
+                {
+                    Text = Texts.Get("pick_all") + "  ·  " + Texts.F("st_old_n", left.Count, Gb(left.Sum(l => l.Bytes))),
+                    FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = B("Muted"),
+                },
+            };
+            every.Click += (s, e) =>
+            {
+                if (every.IsChecked == true) foreach (var l in left) oldPick.Add(l.Path);
+                else foreach (var l in left) oldPick.Remove(l.Path);
+                RenderStorage();
+            };
+            bar.Children.Add(every);
             box.Children.Add(bar);
             if (Texts.Hints) box.Children.Add(Small(Texts.Get("st_old_note"), new Thickness(0, 0, 0, 10)));
             foreach (var l in left)
@@ -3194,6 +3279,7 @@ namespace QuickDeploy
         /// is. Any one of them in a group will do; a mod must pass every group that has one.</summary>
         void Filter_Click(object sender, RoutedEventArgs e)
         {
+            if (JustClosed(FilterBtn)) return;
             var mods = st?.Mods ?? new List<ModRow>();
             var menu = new ContextMenu { PlacementTarget = FilterBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
             Group(menu, false, fromFilter, new List<(string, string, int)>
@@ -3215,6 +3301,7 @@ namespace QuickDeploy
         /// <summary>The second one, beside it: the player's own labels.</summary>
         void TagFilter_Click(object sender, RoutedEventArgs e)
         {
+            if (JustClosed(TagFilterBtn)) return;
             var menu = new ContextMenu { PlacementTarget = TagFilterBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
             var tags = AllTags().Concat(AutoTags().Where(t => !hiddenTags.Contains(t.Name))).ToList();
             if (tags.Count == 0) menu.Items.Add(new MenuItem { Header = Texts.Get("filter_no_tags"), IsEnabled = false });
@@ -3278,8 +3365,14 @@ namespace QuickDeploy
                 root.PreviewMouseWheel += wheel;
                 root.PreviewMouseMove += move;
             };
+            // the moment it closes, not its Closed event: that comes after the click that closed
+            // it has already reached the button underneath
+            var isOpen = System.ComponentModel.DependencyPropertyDescriptor.FromProperty(ContextMenu.IsOpenProperty, typeof(ContextMenu));
+            EventHandler shut = (s, e) => { if (!menu.IsOpen) { closedFor = menu.PlacementTarget; closedAt = Environment.TickCount; } };
+            isOpen.AddValueChanged(menu, shut);
             menu.Closed += (s, e) =>
             {
+                isOpen.RemoveValueChanged(menu, shut);
                 // the menu's own window had the keyboard, and Windows sends the wheel to the
                 // window that has it: without this the list stays unscrollable until something
                 // is clicked, which is the whole fault being fixed here
@@ -3296,18 +3389,21 @@ namespace QuickDeploy
             };
         }
 
-        // the scroll the wheel is turning now, and when it last turned
+        // the scroll the wheel is turning now, when the wheel last turned, and when that scroll last moved
         ScrollViewer wheelTarget;
-        int wheelLast;
+        int wheelLast, wheelMoved;
         const int WheelRestMs = 400;
+        const int WheelHoldMs = 250;
 
         /// <summary>The wheel the way browsers have it, for a list with a scroll of its own inside
         /// a scrolling page (the user, 2026-10-25). A ScrollViewer keeps every turn of the wheel,
         /// even with nothing to scroll, so the tags page never moved with the pointer over its
         /// add list, at the list's end or with no scroll bar on it at all. Now a turn goes to the
         /// innermost scroll under the pointer that can still move that way, and stays with it
-        /// until the wheel rests for WheelRestMs: a list that reaches its end during a turn stops
-        /// there, and the next turn moves the page.</summary>
+        /// until the wheel rests for WheelRestMs. A list that reaches its end holds the wheel for
+        /// WheelHoldMs, so a flick past its end does not throw the page; a wheel still turning
+        /// after that moves the page at once. Holding until the wheel rested kept the page still
+        /// for as long as the wheel turned, 4 to 10 seconds (the user, 2026-10-25).</summary>
         void Wheel(object sender, MouseWheelEventArgs e)
         {
             if (e.Handled || e.Delta == 0 || Keyboard.Modifiers != ModifierKeys.None) return;
@@ -3316,10 +3412,18 @@ namespace QuickDeploy
             bool fresh = unchecked(e.Timestamp - wheelLast) > WheelRestMs || wheelTarget == null ||
                          !wheelTarget.IsVisible || !scrolls.Contains(wheelTarget);
             wheelLast = e.Timestamp;
-            if (fresh) wheelTarget = scrolls.FirstOrDefault(v => CanMove(v, e.Delta));
+            if (fresh) { wheelTarget = scrolls.FirstOrDefault(v => CanMove(v, e.Delta)); wheelMoved = e.Timestamp; }
             if (wheelTarget == null) return;                    // nothing here moves that way
             e.Handled = true;
-            if (!CanMove(wheelTarget, e.Delta)) return;         // reached its end during this turn
+            if (!CanMove(wheelTarget, e.Delta))
+            {
+                if (unchecked(e.Timestamp - wheelMoved) < WheelHoldMs) return;      // just reached its end: held
+                // still turning: on to the next scroll out that can move
+                var next = scrolls.SkipWhile(v => v != wheelTarget).Skip(1).FirstOrDefault(v => CanMove(v, e.Delta));
+                if (next == null) return;
+                wheelTarget = next;
+            }
+            wheelMoved = e.Timestamp;
             wheelTarget.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
             {
                 RoutedEvent = UIElement.MouseWheelEvent, Source = wheelTarget,
@@ -3340,6 +3444,16 @@ namespace QuickDeploy
         /// <summary>Whether v can still scroll the way a turn of delta goes.</summary>
         static bool CanMove(ScrollViewer v, int delta) =>
             v.ScrollableHeight > 0.5 && (delta < 0 ? v.VerticalOffset < v.ScrollableHeight - 0.5 : v.VerticalOffset > 0.5);
+
+        // the button whose menu closed last, and when
+        UIElement closedFor;
+        int closedAt;
+
+        /// <summary>Whether a click on the button that opens a menu is the one that just closed that
+        /// menu: the press outside closes it, then the same click opened it again, so it flashed
+        /// instead of going (the user, 2026-10-25). A second click on the button closes its menu.</summary>
+        bool JustClosed(UIElement button) =>
+            ReferenceEquals(closedFor, button) && unchecked(Environment.TickCount - closedAt) < 300;
 
         /// <summary>The scroll of the page on show.</summary>
         ScrollViewer OnShow() =>
@@ -3933,13 +4047,19 @@ namespace QuickDeploy
             put.Click += (s, e) => TagThese(st.Mods.Where(m => tagPick.Contains(m.Id) && !Carries(m, label, false)).ToList(), label);
             DockPanel.SetDock(put, Dock.Right);
             foot.Children.Add(put);
-            var none = new Button { Content = Texts.Get("tag_pick_none"), Style = (Style)FindResource("Ghost"), MinHeight = 34, FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
-            none.Click += (s, e) => { tagPick.Clear(); FillTagHits(); };
-            DockPanel.SetDock(none, Dock.Right);
-            foot.Children.Add(none);
-            var every = new Button { Content = Texts.Get("tag_pick_all"), Style = (Style)FindResource("Ghost"), MinHeight = 34, FontSize = 12, Margin = new Thickness(8, 0, 0, 0) };
-            every.Click += (s, e) => { foreach (var m in hits) tagPick.Add(m.Id); FillTagHits(); };
-            DockPanel.SetDock(every, Dock.Right);
+            // one tick for all of them, as in the mod list (the user, 2026-10-25)
+            var every = new CheckBox
+            {
+                Style = (Style)FindResource("Tick"), IsChecked = hits.All(m => tagPick.Contains(m.Id)), VerticalAlignment = VerticalAlignment.Center,
+                Content = new TextBlock { Text = Texts.Get("pick_all"), FontSize = 12, Foreground = B("Ink") }, Margin = new Thickness(0, 0, 16, 0),
+            };
+            every.Click += (s, e) =>
+            {
+                if (every.IsChecked == true) foreach (var m in hits) tagPick.Add(m.Id);
+                else foreach (var m in hits) tagPick.Remove(m.Id);
+                FillTagHits();
+            };
+            DockPanel.SetDock(every, Dock.Left);
             foot.Children.Add(every);
             foot.Children.Add(count);
 
@@ -3971,6 +4091,7 @@ namespace QuickDeploy
                     if (box.IsChecked == true) tagPick.Add(id); else tagPick.Remove(id);
                     count.Text = Texts.F("tag_picked", tagPick.Count);
                     put.IsEnabled = tagPick.Count > 0;
+                    every.IsChecked = hits.All(x => tagPick.Contains(x.Id));
                 };
                 rows.Children.Add(box);
             }

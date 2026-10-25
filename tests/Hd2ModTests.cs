@@ -351,6 +351,19 @@ namespace Hd2Mod.Tests
             Assert.Equal(new[] { "one", "three" }, new[] { Body(A + ".patch_0"), Body(A + ".patch_1") });
         }
 
+        /// <summary>Several mods deleted at once, as the Storage page does with its ticked mods
+        /// (the user, 2026-10-25): one deploy, every folder gone, the rest untouched.</summary>
+        [Fact]
+        public void DeleteTakesSeveralModsOffTheDiskAtOnce()
+        {
+            Cli("deploy");
+            Assert.Contains("deleted 2 mods", Cli("delete", "One", "Two", "--yes"));
+            Assert.Equal(new[] { "Three" }, Library.Load().Mods.Select(m => m.Name));
+            Assert.False(Directory.Exists(one) || Directory.Exists(two), "their folders are gone");
+            Assert.True(Directory.Exists(three), "the other stays");
+            Assert.Equal(new[] { "three" }, new[] { Body(A + ".patch_0") });
+        }
+
         [Fact]
         public void DeleteChangesNothingWithoutYesOrWhileTheGameRuns()
         {
