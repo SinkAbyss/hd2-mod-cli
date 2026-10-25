@@ -112,6 +112,8 @@ namespace Hd2Mod
             Cmd("leftovers", new Spec { Help = "the folders of old versions this program unpacked that no mod uses any more " +
                                                "(--delete with folders, or --delete --all, deletes them; the game is untouched)",
                                         Many = true, Flags = new[] { "--delete", "--all" }, Run = LeftoverCmd }),
+            Cmd("self-update", new Spec { Help = "whether a newer version of this program is on GitHub (read only; the official build counts releases, the development build pre-releases too)",
+                                          Run = SelfUpdateCmd }),
             Cmd("check", new Spec { Help = "whether the game folder is exactly what the library asks for: what is missing, " +
                                            "what is there that no mod wants (another manager's, or an interrupted deploy), and " +
                                            "what is not the file the library holds (--deep reads the bytes of the copies)",
@@ -704,6 +706,15 @@ namespace Hd2Mod
         }
 
 
+
+        static void SelfUpdateCmd(Args a, TextWriter o)
+        {
+            o.WriteLine("hd2-mod-cli " + StateDoc.Version + (SelfUpdate.Official ? " (official build)" : " (development build: pre-releases count too)"));
+            var u = SelfUpdate.Check();
+            if (u.Latest == null) o.WriteLine("no release on GitHub yet");
+            else if (u.Newer) o.WriteLine(u.Latest + " is out" + (u.Prerelease ? " (pre-release)" : "") + ": " + u.Page);
+            else o.WriteLine("up to date (newest: " + u.Latest + ")");
+        }
 
         static void CheckUpdatesCmd(Args a, TextWriter o)
         {

@@ -397,6 +397,13 @@
                 <Setter Property="Foreground" Value="{StaticResource TapeInk}"/>
                 <Setter Property="FontWeight" Value="SemiBold"/>
               </Trigger>
+              <!-- a line that cannot be chosen now looks it: greyed, no hand (the user, 2026-10-25:
+                   only losing the highlight left it looking clickable) -->
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                <Setter TargetName="c" Property="Opacity" Value="0.55"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+              </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -416,7 +423,7 @@
               <DockPanel>
                 <Path DockPanel.Dock="Right" Data="M0,0 L4,4 L0,8" Stroke="{StaticResource Muted}" StrokeThickness="1.4"
                       Margin="20,0,0,0" VerticalAlignment="Center"/>
-                <ContentPresenter ContentSource="Header" VerticalAlignment="Center"/>
+                <ContentPresenter x:Name="c" ContentSource="Header" VerticalAlignment="Center"/>
                 <Popup IsOpen="{TemplateBinding IsSubmenuOpen}" Placement="Right" AllowsTransparency="True"
                        Focusable="False" PopupAnimation="None" HorizontalOffset="-2">
                   <Border Background="{StaticResource Ground700}" BorderBrush="{StaticResource Grid}" BorderThickness="1" Padding="0,4">
@@ -428,6 +435,11 @@
             <ControlTemplate.Triggers>
               <Trigger Property="IsHighlighted" Value="True">
                 <Setter TargetName="b" Property="Background" Value="{StaticResource Grid}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+                <Setter TargetName="c" Property="Opacity" Value="0.55"/>
+                <Setter Property="Cursor" Value="Arrow"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>

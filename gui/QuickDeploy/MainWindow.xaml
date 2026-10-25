@@ -46,8 +46,15 @@
                     WindowChrome.IsHitTestVisibleInChrome="True">
               <!-- eight teeth around (12,12), and the hole cut out of it there: both are drawn
                    about that one centre, so the hole sits in the middle whatever the size -->
+              <Grid>
               <Path Data="F0 M18.93,9.41 L21.82,10.09 L21.82,13.91 L18.93,14.59 L18.73,15.07 L20.29,17.59 L17.59,20.29 L15.07,18.73 L14.59,18.93 L13.91,21.82 L10.09,21.82 L9.41,18.93 L8.93,18.73 L6.41,20.29 L3.71,17.59 L5.27,15.07 L5.07,14.59 L2.18,13.91 L2.18,10.09 L5.07,9.41 L5.27,8.93 L3.71,6.41 L6.41,3.71 L8.93,5.27 L9.41,5.07 L10.09,2.18 L13.91,2.18 L14.59,5.07 L15.07,5.27 L17.59,3.71 L20.29,6.41 L18.73,8.93 Z M12,8.6 A3.4,3.4 0 1,1 12,15.4 A3.4,3.4 0 1,1 12,8.6 Z"
                     Fill="{StaticResource Ink}" Width="20" Height="20" Stretch="Uniform"/>
+              <!-- a newer version of this program is out (the user, 2026-10-25): a red dot at
+                   the gear's top right, ringed in the header's ground to stand clear of it -->
+              <Ellipse x:Name="UpdateDot" Visibility="Collapsed" Width="10" Height="10" Fill="{StaticResource Red}"
+                       Stroke="{StaticResource Ground700}" StrokeThickness="2"
+                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-4,0"/>
+              </Grid>
             </Button>
             <!-- what is deployed as hard links now. What they have saved over all deploys adds
                  up to a number too big for a caption, so it lives on the storage page -->

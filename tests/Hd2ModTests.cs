@@ -512,6 +512,12 @@ namespace Hd2Mod.Tests
                 else if (path == "/gh/repos/someone/cape/releases/latest")
                     body = Bytes("{\"tag_name\": \"v2.0\", \"html_url\": \"https://github.com/someone/cape/releases/tag/v2.0\", " +
                                  "\"assets\": [{\"browser_download_url\": \"" + baseUrl + "cdn/f2.zip\"}]}");
+                // this program's own releases: a draft, a pre-release, a release, an old one
+                else if (path == "/gh/repos/pat-pat-patrick/hd2-mod-cli/releases")
+                    body = Bytes("[{\"tag_name\": \"v9.0.0\", \"draft\": true, \"prerelease\": false, \"html_url\": \"d\"}," +
+                                 " {\"tag_name\": \"v0.99.0\", \"draft\": false, \"prerelease\": true, \"html_url\": \"https://github.com/pat-pat-patrick/hd2-mod-cli/releases/tag/v0.99.0\"}," +
+                                 " {\"tag_name\": \"v0.98.0\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/pat-pat-patrick/hd2-mod-cli/releases/tag/v0.98.0\"}," +
+                                 " {\"tag_name\": \"v0.1.0\", \"draft\": false, \"prerelease\": false, \"html_url\": \"o\"}]");
                 else if (path.StartsWith("/gh/")) { status = 404; body = Bytes("{}"); }
                 else { status = 404; body = Bytes("{}"); }
                 c.Response.StatusCode = status;
@@ -554,6 +560,47 @@ namespace Hd2Mod.Tests
             Assert.Equal("v2.0", updated.GitHub.Tag);
             Assert.Equal("cape v2", File.ReadAllText(Path.Combine(updated.Path, A + ".patch_0")));
             Assert.Equal("current", Updates.Check(Library.Load()).First(x => x.ModId == updated.Id).Status);
+        }
+
+        /// <summary>This program's own updates (the user, 2026-10-25): the development build is
+        /// published as pre-releases, the official build as releases. The official build is never
+        /// offered a pre-release (a build without Nexus Mods); a draft counts for neither.</summary>
+        [Fact]
+        public void ThisProgramsOwnReleasesAreCheckedByBuild()
+        {
+            var list = ((List<object>)Json.Parse(System.Text.Encoding.UTF8.GetString(new System.Net.WebClient().DownloadData(
+                Updates.GitHubApi + "/repos/" + SelfUpdate.Repo + "/releases")))).OfType<Dictionary<string, object>>().ToList();
+            var official = SelfUpdate.Pick(list, "0.8.0", true);
+            Assert.Equal("v0.98.0", official.Latest);
+            Assert.False(official.Prerelease);
+            Assert.True(official.Newer);
+            var dev = SelfUpdate.Pick(list, "0.8.0", false);
+            Assert.Equal("v0.99.0", dev.Latest);
+            Assert.True(dev.Prerelease);
+            // the version running is the newest: nothing to offer
+            Assert.False(SelfUpdate.Pick(list, "0.99.0", false).Newer);
+            Assert.False(SelfUpdate.Pick(list, "1.0", true).Newer);
+            Assert.Null(SelfUpdate.Pick(new List<Dictionary<string, object>>(), "0.8.0", true).Latest);
+
+            // checked through the command line: the build's own rule, the result kept
+            Assert.Equal(0, SelfUpdate.Last().CheckedAt);
+            Assert.True(SelfUpdate.Due());
+            Assert.Contains((SelfUpdate.Official ? "v0.98.0 is out: " : "v0.99.0 is out (pre-release): ") + "https://github.com/", Cli("self-update"));
+            var last = SelfUpdate.Last();
+            Assert.Equal(SelfUpdate.Official ? "v0.98.0" : "v0.99.0", last.Latest);
+            Assert.True(last.Newer);
+            Assert.True(last.CheckedAt > 0);
+            Assert.False(SelfUpdate.Due());                  // once a day
+            // a pre-release a development build kept in the same folder: nothing to the official
+            // build, which checks again rather than wait a day
+            Store.Save("self_update.json", new Dictionary<string, object> { ["checked_at"] = last.CheckedAt, ["latest"] = "v5.0.0", ["prerelease"] = true, ["page"] = "p" });
+            Assert.Equal(!SelfUpdate.Official, SelfUpdate.Last().Newer);
+            Assert.Equal(SelfUpdate.Official, SelfUpdate.Due());
+            // the automatic check can be turned off; on by default
+            SelfUpdate.Auto = false;
+            Assert.False(SelfUpdate.Auto);
+            SelfUpdate.Auto = true;
+            Assert.True(SelfUpdate.Auto);
         }
 
         [Fact]

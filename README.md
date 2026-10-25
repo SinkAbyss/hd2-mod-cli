@@ -90,7 +90,7 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 
 | Part | What it shows and does |
 |---|---|
-| Title bar | How many mods, how many are on, how many changes wait for a deploy; **Deploy / Storage / Labels** to switch pages; a gear for the settings (the language, whether the mod that wins is shown at the bottom of the list or at the top, whether the lines that explain things are shown, who made it and where it comes from); the hard-linked files in the game. |
+| Title bar | How many mods, how many are on, how many changes wait for a deploy; **Deploy / Storage / Labels** to switch pages; a gear for the settings (the language, whether the mod that wins is shown at the bottom of the list or at the top, whether the lines that explain things are shown, this program's updates, who made it and where it comes from); a red dot on the gear when a newer version of this program is out; the hard-linked files in the game. |
 | Library (left) | Filters: all mods, those with changes to deploy, Lua mods, off, with conflicts, and any that cannot be read. |
 | Deploy target (left) | The library and game folders, and whether they share a drive (hard links) or not (copies). **Change…** picks another game folder. When the game holds copies that could be hard links, **Make hard links** frees their space without writing anything. |
 | Filter (left of the search box) | Narrows the list to your own labels: a mod shows when it carries any of the labels ticked. Alt+click a label to hide the mods that carry it. |
@@ -231,6 +231,7 @@ A change made on the command line shows in an open window half a second later.
 | `replace MOD PATH` | A new version of a mod: same place in the order, the same options by name. |
 | `remove MOD` | Take a mod out of the library; its files stay. |
 | `check-updates` | Check every mod from GitHub for a newer release. |
+| `self-update` | Whether a newer version of this program is on GitHub (read only). The official build counts releases only; the development build counts pre-releases too. |
 | `update MOD` | Download a mod's newer version from its GitHub releases and put it in its place. |
 | `source MOD URL` / `source MOD --clear` | Set where a mod comes from: a Nexus Mods page, a GitHub repository or another page. |
 | `import-hd2mm [--dir DIR] [--replace]` | Add HD2ModManager's mods, order, on/off and options to the library (read only; its folder-name and object options both). |
@@ -291,6 +292,7 @@ Everything is kept in `%USERPROFILE%\.hd2-mod-cli` (`HD2MOD_HOME` overrides it):
 | `deployed.json` | What the last deploy put in the game folder. |
 | `same.json` | Large files already compared, so they are not read again. |
 | `gui.json` | The window's own settings (its language, which way the list is shown, the explaining lines). |
+| `self_update.json` | The last check of this program's own releases, and whether the window checks by itself (at most once a day). |
 | `*.json.bak` | The version each file had before the last save. Mods can be downloaded again; what you chose — the mods, their order, their options, their labels — cannot, and it is a few kilobytes. To go back, rename the `.bak` over the file. |
 
 The **default mod folder** (where added zips are unpacked, each as its own
@@ -381,7 +383,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 | 位置 | 内容与功能 |
 |---|---|
-| 标题栏 | mod 数、启用数、待部署的变更数；**部署 / 存储 / 标签** 切换页面；齿轮按钮打开设置（界面语言、列表中优先的 mod 显示在下方还是上方、是否显示说明文字、作者与项目地址）；游戏目录中的硬链接文件 |
+| 标题栏 | mod 数、启用数、待部署的变更数；**部署 / 存储 / 标签** 切换页面；齿轮按钮打开设置（界面语言、列表中优先的 mod 显示在下方还是上方、是否显示说明文字、本程序的更新、作者与项目地址），有新版本时齿轮右上角显示红点；游戏目录中的硬链接文件 |
 | 左侧 · MOD 库 | 筛选：全部、待部署、Lua mod、已停用、冲突、读取出错 |
 | 左侧 · 部署目标 | mod 库与游戏目录，以及二者是否位于同一分区（硬链接）或不同分区（复制）。**更改…** 用于更换游戏目录；游戏目录中存在可改为硬链接的复制件时，**改为硬链接** 可在不写入数据的情况下释放空间。卡片底部为 **恢复原版** |
 | 筛选（搜索框左侧） | 按自己贴的标签过滤：mod 带有任一所选标签即显示。按住 Alt 键点击标签，可隐藏带有该标签的 MOD |
@@ -457,6 +459,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
     hd2qd folders            # 列出 mod 库文件夹
     hd2qd status             # 显示部署将执行的更改，不做修改
     hd2qd check-updates      # 检查来自 GitHub 的 mod 是否有新版本
+    hd2qd self-update        # 检查本程序是否有新版本（正式版只看正式发布，开发版也看预发布）
     hd2qd deploy
 
 完整命令列表见英文部分的表格。设置与记录保存在 `%USERPROFILE%\.hd2-mod-cli`。每个文件保存时会把上一版留为同名的 `.bak`：mod 可以重新下载，而你的选择（哪些 mod、顺序、可选内容、标签）不能，且只有几十 KB。需要回退时，把 `.bak` 改名覆盖原文件即可。

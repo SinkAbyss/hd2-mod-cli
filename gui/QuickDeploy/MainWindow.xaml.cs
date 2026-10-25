@@ -143,6 +143,28 @@ namespace QuickDeploy
             ClickTest();
             DragTest();
             Listen();
+            SelfUpdateAtStart();
+        }
+
+        /// <summary>The red dot on the settings icon, from the last check of this program's own
+        /// releases: shown while that version is newer than the one running.</summary>
+        void ShowUpdateDot()
+        {
+            var u = SelfUpdate.Last();
+            UpdateDot.Visibility = u.Newer ? Visibility.Visible : Visibility.Collapsed;
+            SettingsBtn.ToolTip = u.Newer ? Texts.F("self_tip", u.Latest) : null;
+        }
+
+        /// <summary>The last result at once, then, when the automatic check is on and due (once a
+        /// day), GitHub asked in the background. A check that fails says nothing here: the next
+        /// start tries again, and Settings says why.</summary>
+        async void SelfUpdateAtStart()
+        {
+            ShowUpdateDot();
+            if (!SelfUpdate.Due()) return;
+            try { await Task.Run(() => SelfUpdate.Check()); }
+            catch (Exception e) when (e is ModError || e is IOException || e is UnauthorizedAccessException || e is TaskCanceledException) { return; }
+            ShowUpdateDot();
         }
 
         // the switch of each row on screen, for the click test
@@ -4399,13 +4421,74 @@ namespace QuickDeploy
             foreach (var key in new[] { "set_key_rename", "set_key_many" })
                 body.Children.Add(new TextBlock { Text = "· " + Texts.Get(key), Foreground = B("Ink"), FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 2) });
 
-            // who made it, and where it comes from (last)
-            body.Children.Add(Label("set_about", new Thickness(0, 20, 0, 6)));
+            // this program's own updates (the user, 2026-10-25)
+            body.Children.Add(Label("set_update", new Thickness(0, 20, 0, 6)));
             body.Children.Add(new TextBlock
             {
-                Text = Texts.Get("title") + "  " + StateDoc.Version + (HasNexus ? "" : "  " + Texts.Get("set_no_nexus")),
+                Text = Texts.Get("title") + "  " + StateDoc.Version + "  ·  " + Texts.Get(SelfUpdate.Official ? "build_official" : "build_dev") +
+                       (HasNexus ? "" : "  " + Texts.Get("set_no_nexus")),
                 FontFamily = Mono, FontSize = 13, Foreground = B("Ink"), Margin = new Thickness(0, 0, 0, 6), TextWrapping = TextWrapping.Wrap,
             });
+            var upBox = new StackPanel();
+            body.Children.Add(upBox);
+            string failed = null;
+            bool checking = false;
+            void FillUpdate()
+            {
+                upBox.Children.Clear();
+                var u = SelfUpdate.Last();
+                string when = u.CheckedAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(u.CheckedAt).LocalDateTime.ToString("yyyy-MM-dd HH:mm") : null;
+                string said = checking ? Texts.Get("self_checking")
+                    : failed != null ? Texts.F("self_failed", failed)
+                    : u.Newer ? Texts.F("self_new", u.Latest + (u.Prerelease ? Texts.Get("self_pre") : ""))
+                    : when == null ? Texts.Get("self_none")
+                    : u.Latest == null ? Texts.F("self_no_release", when)
+                    : Texts.F("self_current", when);
+                upBox.Children.Add(new TextBlock
+                {
+                    Text = said, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10),
+                    Foreground = B(u.Newer && !checking && failed == null ? "Yellow" : "Ink"),
+                    FontWeight = u.Newer && !checking && failed == null ? FontWeights.SemiBold : FontWeights.Normal,
+                });
+                var btns = new StackPanel { Orientation = Orientation.Horizontal };
+                if (u.Newer && !string.IsNullOrEmpty(u.Page))
+                {
+                    var open = new Button { Content = Texts.Get("self_open"), Style = (Style)FindResource("Primary"), MinHeight = 36, Margin = new Thickness(0, 0, 8, 0), ToolTip = u.Page };
+                    var page = u.Page;
+                    open.Click += (s, e2) => Process.Start(new ProcessStartInfo(page) { UseShellExecute = true });
+                    btns.Children.Add(open);
+                }
+                var check = new Button { Content = Texts.Get("self_check"), Style = (Style)FindResource("Ghost"), MinHeight = 36, IsEnabled = !checking };
+                check.Click += async (s, e2) =>
+                {
+                    checking = true;
+                    failed = null;
+                    FillUpdate();
+                    try { await Task.Run(() => SelfUpdate.Check()); }
+                    catch (ModError err) { failed = CheckWhy(err.Kind); }
+                    catch (Exception err) when (err is IOException || err is UnauthorizedAccessException || err is TaskCanceledException) { failed = Texts.Get("up_why_offline"); }
+                    checking = false;
+                    FillUpdate();
+                    ShowUpdateDot();
+                };
+                btns.Children.Add(check);
+                upBox.Children.Add(btns);
+            }
+            FillUpdate();
+            var autoSw = new CheckBox { Style = (Style)FindResource("Switch"), IsChecked = SelfUpdate.Auto, VerticalAlignment = VerticalAlignment.Center };
+            var autoLine = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 14, 0, 0) };
+            autoLine.Children.Add(autoSw);
+            autoLine.Children.Add(new TextBlock { Text = Texts.Get("self_auto"), Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) });
+            autoSw.Click += (s, e2) =>
+            {
+                try { SelfUpdate.Auto = autoSw.IsChecked == true; }
+                catch (Exception err) when (err is IOException || err is UnauthorizedAccessException) { autoSw.IsChecked = SelfUpdate.Auto; }
+            };
+            body.Children.Add(autoLine);
+            body.Children.Add(Small(Texts.Get(SelfUpdate.Official ? "self_auto_note_official" : "self_auto_note_dev"), new Thickness(0, 8, 0, 0)));
+
+            // who made it, and where it comes from (last)
+            body.Children.Add(Label("set_about", new Thickness(0, 20, 0, 6)));
             // which library this window is reading. Two windows on two libraries look exactly
             // alike, and one of them is then showing a library nobody else has (the user,
             // 2026-10-25)

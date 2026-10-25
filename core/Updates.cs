@@ -39,7 +39,7 @@ namespace Hd2Mod
             return c;
         }
 
-        static string Get(string url)
+        internal static string Get(string url)
         {
             HttpResponseMessage r;
             try { r = http.GetAsync(url).GetAwaiter().GetResult(); }
