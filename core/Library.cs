@@ -298,21 +298,45 @@ namespace Hd2Mod
             };
         }
 
+        // each manifest.json read once while it is unchanged: the 65 of a library took 57 ms of
+        // every state read (the user, 2026-10-26). What is kept is the parsed text, never a
+        // Manifest, which a caller may change
+        static readonly Dictionary<string, (string Stamp, object Raw, string Error)> parsed =
+            new Dictionary<string, (string, object, string)>(StringComparer.OrdinalIgnoreCase);
+
         public static Manifest Read(string folder)
         {
             var p = System.IO.Path.Combine(folder, "manifest.json");
-            if (!File.Exists(p)) return null;
-            var text = File.ReadAllText(p, Encoding.UTF8);
+            var fi = new FileInfo(p);
+            if (!fi.Exists) return null;
+            var stamp = fi.Length + ":" + fi.LastWriteTimeUtc.Ticks;
+            (string Stamp, object Raw, string Error) known;
+            lock (parsed) parsed.TryGetValue(p, out known);
+            if (known.Stamp != stamp)
+            {
+                try { known = (stamp, Parse(File.ReadAllText(p, Encoding.UTF8)), null); }
+                catch (FormatException e) { known = (stamp, null, e.Message); }
+                lock (parsed) parsed[p] = known;
+            }
+            if (known.Error != null) throw new ModError(folder + ": manifest.json cannot be read: " + known.Error);
+            return FromRaw(known.Raw);
+        }
+
+        /// <summary>A manifest's text as JSON: strict first, then with // comments and trailing commas forgiven.</summary>
+        static object Parse(string text)
+        {
             if (text.Length > 0 && text[0] == '﻿') text = text.Substring(1);
-            object raw;
-            try { raw = Json.Parse(text); }
+            try { return Json.Parse(text); }
             catch (FormatException)
             {
                 var loose = Regex.Replace(text, @"^\s*//[^\n]*$", "", RegexOptions.Multiline);
                 loose = Regex.Replace(loose, @",(\s*[}\]])", "$1");
-                try { raw = Json.Parse(loose); }
-                catch (FormatException e) { throw new ModError(folder + ": manifest.json cannot be read: " + e.Message); }
+                return Json.Parse(loose);
             }
+        }
+
+        static Manifest FromRaw(object raw)
+        {
             var d = Canonical(raw) as Dictionary<string, object> ?? new Dictionary<string, object>();
             var m = new Manifest { Name = Json.Str(d, "Name"), Description = Json.Str(d, "Description") ?? "", IconPath = Json.Str(d, "IconPath"), Guid = Json.Str(d, "Guid") };
             foreach (var t in Json.List(d, "Tags").Concat(Json.List(d, "Categories")))

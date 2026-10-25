@@ -316,6 +316,8 @@ Everything is kept in `%USERPROFILE%\.hd2-mod-cli` (`HD2MOD_HOME` overrides it):
 | `gui.json` | The window's own settings (its language, which way the list is shown, the explaining lines). |
 | `deploy_history.json` | When each of the last 50 deploys ran and which mods it put in the game, so that a crash can be matched with them. |
 | `lua_scan.json` | What each patch archive's Lua scripts were found to be, by the archive's size and time, so a start does not read and check them again. |
+| `window_state.json` | The list as the window last showed it, drawn at once at the next start while the library and the game folder are read again (Deploy waits for that read). |
+| `thumbs\` | A 256-pixel copy of each mod's picture, so a start reads a few kilobytes instead of the original. |
 | `self_update.json` | The last check of this program's own releases, and whether the window checks by itself (at most once a day). |
 | `*.json.bak` | The version each file had before the last save. Mods can be downloaded again; what you chose — the mods, their order, their options, their labels — cannot, and it is a few kilobytes. To go back, rename the `.bak` over the file. |
 

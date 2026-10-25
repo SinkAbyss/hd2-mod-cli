@@ -11,19 +11,23 @@ namespace Hd2Mod
         /// <summary>How many of a conflict's resources the state names; the count says how many there are.</summary>
         const int Shown = 30;
 
-        /// <summary>Patch files (not companions) and bytes (with companions) in folders, not recursive.</summary>
+        /// <summary>Patch files (not companions) and bytes (with companions) in folders, not recursive.
+        /// The sizes come with the folder's listing: asking each file for its own took 60 ms of
+        /// every state read (the user, 2026-10-26: the window's start was slow).</summary>
         static (long Files, long Bytes) FolderStats(IEnumerable<string> folders)
         {
             long files = 0, size = 0;
             foreach (var folder in folders)
             {
                 if (!Directory.Exists(folder)) continue;
-                foreach (var f in Deploy.List(folder))
+                var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                foreach (var fi in new DirectoryInfo(folder).EnumerateFiles()) sizes[fi.Name] = fi.Length;
+                foreach (var kv in sizes)
                 {
-                    if (!Deploy.Patch.IsMatch(f)) continue;
+                    if (!Deploy.Patch.IsMatch(kv.Key)) continue;
                     files++;
-                    size += Deploy.SizeOrZero(Paths.Join(folder, f));
-                    foreach (var c in Deploy.Companions) size += Deploy.SizeOrZero(Paths.Join(folder, f + c));
+                    size += kv.Value;
+                    foreach (var c in Deploy.Companions) if (sizes.TryGetValue(kv.Key + c, out var cs)) size += cs;
                 }
             }
             return (files, size);

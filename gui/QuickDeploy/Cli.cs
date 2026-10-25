@@ -174,6 +174,7 @@ namespace QuickDeploy
         public List<Clash> Clashes = new List<Clash>();
         /// <summary>Whether resources can be named (HD2SDK's list was found).</summary>
         public bool ResourceNames;
+        // (Lua is set again when a read is still waiting for the scripts)
         public LuaCheck Lua;
         /// <summary>Some mods' scripts are not read yet: the Lua facts come with a later read.</summary>
         public bool LuaPending;

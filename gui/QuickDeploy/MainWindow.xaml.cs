@@ -70,7 +70,9 @@ namespace QuickDeploy
 
         public MainWindow()
         {
+            Mark("window made");
             InitializeComponent();
+            Mark("window laid out");
             Words();
             if (startSearch != null) SearchBox.Text = startSearch;
             StateChanged += (s, e) => FitMaximized();
@@ -136,10 +138,23 @@ namespace QuickDeploy
 
         // ---------------------------------------------------------------- start, state, commands
 
+        /// <summary>HD2QD_TIMING=file (measuring only): the milliseconds since the process started
+        /// at each step of the start, so a slow start can be taken apart.</summary>
+        static readonly string timing = Environment.GetEnvironmentVariable("HD2QD_TIMING");
+
+        static void Mark(string step)
+        {
+            if (timing == null) return;
+            var ms = (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds;
+            try { File.AppendAllText(timing, string.Format("{0,6:0} ms  {1}\r\n", ms, step)); } catch (IOException) { }
+        }
+
         void Start()
         {
+            Mark("window loaded");
             LuaMods.Lazy = true;                       // the list first; the mods' scripts after (WarmLua)
             Watch();
+            ShowSaved();
             Refresh();
             ClickTest();
             DragTest();
@@ -797,6 +812,7 @@ namespace QuickDeploy
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
             SaveWhere();
+            SaveList();
             base.OnClosing(e);
         }
 
@@ -879,7 +895,9 @@ namespace QuickDeploy
                 do
                 {
                     refreshAgain = false;
+                    Mark("state read: start");
                     var r = await Queued(() => Cli.Run("state"));
+                    Mark("state read: done");
                     if (!r.Ok)
                     {
                         // the list on show was read before this one failed. It is not the library
@@ -893,9 +911,23 @@ namespace QuickDeploy
                     // date, so read it again rather than drop it and show nothing (the user,
                     // 2026-10-25: another session deployed and the window never caught up)
                     if (waiting > 0) { refreshAgain = true; await Task.Delay(250); continue; }
-                    try { st = Cli.ReadState(r.Out); }
+                    State read;
+                    try { read = Cli.ReadState(r.Out); }
                     catch (FormatException e) { Foot(Texts.F("failed", e.Message), "Yellow"); return; }
+                    // the scripts not read yet: what was known of them stays on show until they are
+                    if (read.LuaPending && st?.Lua != null)
+                    {
+                        read.Lua = st.Lua;
+                        var had = st.Mods.Where(x => x.Lu != null).ToDictionary(x => x.Id, x => x.Lu);
+                        foreach (var x in read.Mods) if (had.TryGetValue(x.Id, out var lu)) x.Lu = lu;
+                    }
+                    st = read;
+                    stateJson = r.Out;
+                    fromSaved = false;
+                    Mark("state parsed");
                     Render();
+                    Mark("rendered");
+                    if (timing != null) Dispatcher.BeginInvoke(new Action(() => Mark("drawn")), DispatcherPriority.ContextIdle);
                     if (st.LuaPending) WarmLua();
                 } while (refreshAgain);
             }
@@ -909,6 +941,44 @@ namespace QuickDeploy
 
         bool setupDone;
         bool warming;
+
+        // the last state read, kept when the window closes; the list it showed, drawn at once at
+        // the next start while the library and the game folder are read again (the user,
+        // 2026-10-26: "以前我都没看过读取中"). Until that read comes, nothing is deployed from it.
+        string stateJson;
+        bool fromSaved;
+
+        static string SavedPath => Store.PathOf("window_state.json");
+
+        void ShowSaved()
+        {
+            try
+            {
+                if (!File.Exists(SavedPath)) return;
+                var saved = Cli.ReadState(File.ReadAllText(SavedPath, System.Text.Encoding.UTF8));
+                // another version's list, or another library's: not shown
+                if (saved.Version != StateDoc.Version || !string.Equals(saved.Home, Store.Home, StringComparison.OrdinalIgnoreCase)) return;
+                st = saved;
+                fromSaved = true;
+                Mark("saved list read");
+                Render();
+                Mark("saved list rendered");
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is FormatException || e is InvalidCastException
+                                      || e is KeyNotFoundException || e is NullReferenceException) { st = null; fromSaved = false; }
+        }
+
+        void SaveList()
+        {
+            if (stateJson == null) return;
+            try
+            {
+                var tmp = SavedPath + ".tmp";
+                File.WriteAllText(tmp, stateJson, new System.Text.UTF8Encoding(false));
+                if (File.Exists(SavedPath)) File.Replace(tmp, SavedPath, null); else File.Move(tmp, SavedPath);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+        }
 
         /// <summary>The mods' scripts read in the background, once, then the state read again:
         /// the list never waits for them (the user, 2026-10-26).</summary>
@@ -1483,7 +1553,7 @@ namespace QuickDeploy
             SummaryText.Visibility = st.GameDir == null ? Visibility.Visible : Visibility.Collapsed;
             StatLinks.Text = Texts.F("stat_links_v", Texts.N(st.LinkedFiles), Texts.Size(st.LinkedBytes));
             DeployBtn.Content = st.Pending > 0 ? Texts.F("deploy_n", st.Pending) : Texts.Get("deploy");
-            DeployBtn.IsEnabled = st.Deploying == null;      // two at once would undo each other
+            DeployBtn.IsEnabled = st.Deploying == null && !fromSaved;   // two at once would undo each other; a saved list is not the library yet
             // what was just done comes first (a download leaves changes to deploy: the Deploy
             // button counts them); else whether the game folder matches
             if (st.GameDir == null) Foot(Texts.Get("no_game"), "Yellow");
@@ -1517,10 +1587,14 @@ namespace QuickDeploy
             WhereItWas();
             if (!st.Mods.Any(m => m.Id == selectedId && (searchWords.Length == 0 || Shown(m))))
                 selectedId = (Seen().FirstOrDefault() ?? st.Mods.FirstOrDefault())?.Id;
+            Mark("render: top");
             RenderNav();
+            Mark("render: left list");
             FilterWords();
             RenderList();
+            Mark("render: rows");
             RenderDetail();
+            Mark("render: details");
             if (StoragePage.Visibility == Visibility.Visible) RenderStorage();
             if (startPage == "download" || startPage == "storage" || startPage == "tags") ShowPage(startPage);
             startPage = null;
@@ -3420,19 +3494,61 @@ namespace QuickDeploy
                 var written = File.GetLastWriteTimeUtc(file);
                 if (written.Year < 1700) return null;                 // no such file
                 if (images.TryGetValue(file, out var had) && had.Written == written) return had.Image;
-                var bmp = new BitmapImage();
-                bmp.BeginInit();
-                bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
-                bmp.DecodePixelWidth = 256;
-                bmp.UriSource = new Uri(file);
-                bmp.EndInit();
-                bmp.Freeze();
-                images[file] = (written, bmp);
-                return bmp;
+                var img = Decode(file, written);
+                if (img != null) images[file] = (written, img);
+                return img;
             }
             catch (Exception e) when (e is IOException || e is NotSupportedException || e is UriFormatException || e is ArgumentException
                                       || e is UnauthorizedAccessException) { return null; }
+        }
+
+        /// <summary>A picture as the list shows it, on any thread: its small copy in thumbs        /// when there is one, else the picture itself, decoded to 256 px and its small copy kept.
+        /// 24 pictures took 345 ms of the list's first drawing (the user, 2026-10-26: the start
+        /// was slow); their small copies are a few kilobytes each.</summary>
+        static ImageSource Decode(string file, DateTime written)
+        {
+            string thumb;
+            using (var sha = System.Security.Cryptography.SHA1.Create())
+                thumb = IOPath.Combine(Store.Home, "thumbs", BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(file.ToLowerInvariant() + "|" + written.Ticks))).Replace("-", "").Substring(0, 24) + ".png");
+            if (File.Exists(thumb))
+                try { return Open(thumb, 0); }
+                catch (Exception e) when (e is IOException || e is NotSupportedException || e is ArgumentException) { }
+            var bmp = Open(file, 256);
+            try
+            {
+                Directory.CreateDirectory(IOPath.GetDirectoryName(thumb));
+                var png = new PngBitmapEncoder();
+                png.Frames.Add(BitmapFrame.Create(bmp));
+                var tmp = thumb + ".tmp";
+                using (var f = new FileStream(tmp, FileMode.Create, FileAccess.Write)) png.Save(f);
+                if (File.Exists(thumb)) File.Delete(tmp); else File.Move(tmp, thumb);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is NotSupportedException || e is InvalidOperationException) { }
+            return bmp;
+        }
+
+        static BitmapImage Open(string path, int width)
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+            if (width > 0) bmp.DecodePixelWidth = width;
+            bmp.UriSource = new Uri(path);
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
+        }
+
+        async void Later(Border frame, string file, DateTime written)
+        {
+            ImageSource img;
+            try { img = await Task.Run(() => Decode(file, written)); }
+            catch (Exception e) when (e is IOException || e is NotSupportedException || e is UriFormatException || e is ArgumentException
+                                      || e is UnauthorizedAccessException || e is InvalidOperationException) { return; }
+            if (img == null) return;
+            images[file] = (written, img);
+            frame.Child = new Image { Source = img, Stretch = Stretch.UniformToFill };
         }
 
         Border Picture(string file, string glyph, double size, string tint, double glyphSize = 28)
@@ -3440,15 +3556,24 @@ namespace QuickDeploy
             var frame = new Border { BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground900") };
             if (size > 0) { frame.Width = size; frame.Height = size; }
             else { frame.BorderThickness = new Thickness(0); frame.Background = Brushes.Transparent; }
-            var img = LoadImage(file);
-            if (img != null) frame.Child = new Image { Source = img, Stretch = Stretch.UniformToFill };
-            else
-                frame.Child = new Path
-                {
-                    Data = Geometry.Parse(glyph), Stroke = B(tint), StrokeThickness = 1.75, Width = glyphSize, Height = glyphSize, Stretch = Stretch.Uniform,
-                    StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
-                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-                };
+            frame.Child = new Path
+            {
+                Data = Geometry.Parse(glyph), Stroke = B(tint), StrokeThickness = 1.75, Width = glyphSize, Height = glyphSize, Stretch = Stretch.Uniform,
+                StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            };
+            if (string.IsNullOrEmpty(file)) return frame;
+            DateTime written;
+            try { written = File.GetLastWriteTimeUtc(file); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is NotSupportedException) { return frame; }
+            if (written.Year < 1700) return frame;                     // no such file
+            if (images.TryGetValue(file, out var had) && had.Written == written)
+            {
+                frame.Child = new Image { Source = had.Image, Stretch = Stretch.UniformToFill };
+                return frame;
+            }
+            // not decoded yet: the line drawing now, the picture once it is read (the list never waits for it)
+            Later(frame, file, written);
             return frame;
         }
 
