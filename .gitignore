@@ -1,0 +1,7 @@
+gui/design/
+bin/
+obj/
+release/
+*.user
+.vs/
+

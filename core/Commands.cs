@@ -1,0 +1,823 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+
+namespace Hd2Mod
+{
+    /// <summary>The command line: hd2qd COMMAND [ARGS]. The window runs the same commands
+    /// in its own process.</summary>
+    public static class Commands
+    {
+        class Spec
+        {
+            public string Help;
+            public string[] Positionals = new string[0];
+            /// <summary>The last positional takes one or more values.</summary>
+            public bool Many;
+            public string[] Flags = new string[0], Values = new string[0];
+            /// <summary>At most one of these may be given.</summary>
+            public string[] OneOf = new string[0];
+            public Action<Args, TextWriter> Run;
+        }
+
+        class Args
+        {
+            public Dictionary<string, string> Pos = new Dictionary<string, string>();
+            public List<string> Rest = new List<string>();
+            public HashSet<string> Flags = new HashSet<string>();
+            public Dictionary<string, string> Values = new Dictionary<string, string>();
+            public bool Flag(string f) => Flags.Contains(f);
+            public string Value(string v) => Values.TryGetValue(v, out var x) ? x : null;
+        }
+
+        class UsageError : Exception
+        {
+            public UsageError(string m) : base(m) { }
+        }
+
+        static readonly List<KeyValuePair<string, Spec>> Specs = new List<KeyValuePair<string, Spec>>
+        {
+            Cmd("init", new Spec { Help = "set the game folder (found from HD2 Arsenal or Steam when left out)",
+                                   Values = new[] { "--game", "--mods-dir" }, Run = Init }),
+            Cmd("import-arsenal", new Spec { Help = "add HD2 Arsenal's mods, order, on/off and options to the library (read only; mods already in it stay; --replace: the library becomes HD2 Arsenal's)",
+                                             Values = new[] { "--file", "--profile" }, Flags = new[] { "--replace" }, Run = ImportArsenal }),
+            Cmd("import-hd2mm", new Spec { Help = "add HD2ModManager's mods, order, on/off and options to the library (read only; mods already in it stay)",
+                                           Values = new[] { "--dir" }, Flags = new[] { "--replace" }, Run = ImportHd2mm }),
+            Cmd("import-echelon", new Spec { Help = "add Echelon's mods, order, on/off and options to the library (read only; mods already in it stay)",
+                                             Values = new[] { "--file" }, Flags = new[] { "--replace" }, Run = ImportEchelon }),
+            Cmd("folders", new Spec { Help = "the mod folders: the default (where new mods go), the ones added, and those mods are in", Run = FoldersCmd }),
+            Cmd("folder-add", new Spec { Help = "add a mod folder to the list", Positionals = new[] { "path" }, Run = (a, o) => o.WriteLine("added: " + Storage.AddFolder(a.Pos["path"])) }),
+            Cmd("folder-remove", new Spec { Help = "take a mod folder off the list (its files stay)", Positionals = new[] { "path" },
+                                            Run = (a, o) => { Storage.RemoveFolder(a.Pos["path"]); o.WriteLine("off the list: " + a.Pos["path"]); } }),
+            Cmd("folder-default", new Spec { Help = "make a mod folder the default: added zips and downloads go there", Positionals = new[] { "path" },
+                                             Run = (a, o) => { Storage.SetDefault(a.Pos["path"]); o.WriteLine("default: " + Store.ModsDir()); } }),
+            Cmd("relocate", new Spec { Help = "move mods into another mod folder (--keep: copy, the old folders stay); the game's copies of them become hard links",
+                                       Positionals = new[] { "mods" }, Many = true, Values = new[] { "--into" }, Flags = new[] { "--keep" }, Run = RelocateCmd }),
+            Cmd("list", new Spec { Help = "the load order (the last wins)", Flags = new[] { "--files", "--paths" }, Run = List }),
+            Cmd("add", new Spec { Help = "add a mod at the bottom: a zip (unpacked once) or a folder (used where it is)",
+                                  Positionals = new[] { "path" }, Values = new[] { "--name" }, Flags = new[] { "--copy" }, Run = Add }),
+            Cmd("replace", new Spec { Help = "a new version of a mod: same place in the order, same options " +
+                                             "(the folder the old version was unpacked into is deleted; --keep-old keeps it)",
+                                      Positionals = new[] { "mod", "path" }, Values = new[] { "--name" },
+                                      Flags = new[] { "--copy", "--keep-old" }, Run = Replace }),
+            Cmd("remove", new Spec { Help = "take a mod out of the library", Positionals = new[] { "mod" }, Run = Remove }),
+            Cmd("rename", new Spec { Help = "call a mod something else in the library (its folder and files are left alone)",
+                                     Positionals = new[] { "mod", "name" }, Run = Rename }),
+            Cmd("match", new Spec { Help = "ask a mod's source what it is called and fill that in (name, version, author, picture)",
+                                    Positionals = new[] { "mod" }, Flags = new[] { "--all" }, Run = Match }),
+            Cmd("tags", new Spec { Help = "the player's own labels, with how many mods each one is on", Run = TagList }),
+            Cmd("tag", new Spec { Help = "put a label on a mod: tag MOD NAME...", Positionals = new[] { "mod" }, Many = true, Run = Tag }),
+            Cmd("untag", new Spec { Help = "take a label off a mod (--all: every label)", Positionals = new[] { "mod" },
+                                    Many = true, Flags = new[] { "--all" }, Run = Untag }),
+            Cmd("tag-many", new Spec { Help = "put one label on several mods: tag-many NAME MOD...",
+                                       Positionals = new[] { "name" }, Many = true, Run = TagMany }),
+            Cmd("tag-new", new Spec { Help = "make a label, before any mod carries it", Positionals = new[] { "name" }, Run = TagNew }),
+            Cmd("tag-rename", new Spec { Help = "rename a label everywhere it is used", Positionals = new[] { "name", "to" }, Run = TagRename }),
+            Cmd("tag-delete", new Spec { Help = "take a label off every mod", Positionals = new[] { "name" }, Run = TagDelete }),
+            Cmd("check-updates", new Spec { Help = "check every mod from GitHub for a newer release", Run = CheckUpdatesCmd }),
+            Cmd("update", new Spec { Help = "download a mod's newer release from GitHub and put it in the library", Positionals = new[] { "mod" }, Run = UpdateCmd }),
+            Cmd("source", new Spec { Help = "set where a mod comes from: a Nexus Mods page, a GitHub repository, or another page (--clear: none)",
+                                     Positionals = new[] { "mod" }, Many = true, Flags = new[] { "--clear" }, Run = SourceCmd }),
+            Cmd("delete", new Spec { Help = "delete a mod from the disk for good: out of the library and the game (a deploy), its folder deleted",
+                                     Positionals = new[] { "mod" }, Flags = new[] { "--yes" }, Run = DeleteCmd }),
+            Cmd("enable", new Spec { Help = "turn mods on", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => Switch(a, o, true) }),
+            Cmd("disable", new Spec { Help = "turn mods off", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => Switch(a, o, false) }),
+            Cmd("move", new Spec { Help = "move a mod in the load order", Positionals = new[] { "mod" },
+                                   Flags = new[] { "--top", "--bottom" }, Values = new[] { "--to", "--before", "--after" },
+                                   OneOf = new[] { "--top", "--bottom", "--to", "--before", "--after" }, Run = Move }),
+            Cmd("options", new Spec { Help = "a mod's options and sub-options", Positionals = new[] { "mod" }, Run = Options }),
+            Cmd("set", new Spec { Help = "turn an option or sub-option on or off: OPTION, OPTION/SUB, or 2.3",
+                                  Positionals = new[] { "mod", "option", "value" }, Flags = new[] { "--only" }, Run = Set }),
+            Cmd("deploy", new Spec { Help = "make the game folder match the load order, touching only what differs",
+                                     Flags = new[] { "--dry-run", "--copy", "--verify" }, Run = DeployCmd }),
+            Cmd("status", new Spec { Help = "what a deploy would change", Flags = new[] { "--verify" }, Run = Status }),
+            Cmd("relink", new Spec { Help = "make the copies in the game folder hard links to the library (same drive): " +
+                                            "their space comes back, nothing is written",
+                                     Flags = new[] { "--dry-run", "--verify" }, Run = Relink }),
+            Cmd("leftovers", new Spec { Help = "the folders of old versions this program unpacked that no mod uses any more " +
+                                               "(--delete with folders, or --delete --all, deletes them; the game is untouched)",
+                                        Many = true, Flags = new[] { "--delete", "--all" }, Run = LeftoverCmd }),
+            Cmd("check", new Spec { Help = "whether the game folder is exactly what the library asks for: what is missing, " +
+                                           "what is there that no mod wants (another manager's, or an interrupted deploy), and " +
+                                           "what is not the file the library holds (--deep reads the bytes of the copies)",
+                                    Flags = new[] { "--deep" }, Run = CheckCmd }),
+            Cmd("purge", new Spec { Help = "delete every patch file from the game: vanilla", Flags = new[] { "--yes" }, Run = Purge }),
+            Cmd("which", new Spec { Help = "which mod a patch file or archive comes from", Positionals = new[] { "what" }, Run = Which }),
+            Cmd("state", new Spec { Help = "everything about the library and the game folder, as JSON (for a window)",
+                                    Flags = new[] { "--verify" }, Run = State }),
+            Cmd("conflicts", new Spec { Help = "resources that more than one mod ships (the last in the order wins)",
+                                        Flags = new[] { "-v", "--verbose" }, Run = Conflicts }),
+        };
+
+        static KeyValuePair<string, Spec> Cmd(string name, Spec s) => new KeyValuePair<string, Spec>(name, s);
+
+        static string Usage() =>
+            "usage: hd2qd [--version] {" + string.Join(",", Specs.Select(s => s.Key)) + "} ...";
+
+        static string Help()
+        {
+            var lines = new List<string>
+            {
+                Usage(), "",
+                "A command-line mod manager for Helldivers 2. Deploys incrementally: only the files that change are touched.", "",
+                "commands:",
+            };
+            foreach (var kv in Specs) lines.Add("  " + kv.Key.PadRight(16) + kv.Value.Help);
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        static string CommandHelp(string name, Spec s)
+        {
+            var parts = new List<string> { "usage: hd2qd " + name };
+            parts.AddRange(s.Flags.Select(f => "[" + f + "]"));
+            parts.AddRange(s.Values.Select(v => "[" + v + " " + v.TrimStart('-').Replace('-', '_').ToUpperInvariant() + "]"));
+            parts.AddRange(s.Positionals.Select((p, i) => s.Many && i == s.Positionals.Length - 1 ? p + " [" + p + " ...]" : p));
+            return string.Join(" ", parts) + Environment.NewLine + Environment.NewLine + s.Help;
+        }
+
+        /// <summary>Runs one command line; 0 done, 1 refused (a message on err), 2 a wrong command line.</summary>
+        public static int Run(string[] argv, TextWriter output, TextWriter err) => Run(argv, output, err, out _);
+
+        /// <summary>The commands that only read: everything else writes the library, the deploy
+        /// record or the game folder.</summary>
+        static readonly HashSet<string> ReadOnly = new HashSet<string>
+        {
+            "folders", "list", "tags", "status", "check", "which", "state", "conflicts",
+        };
+
+        static bool Writes(string command, Args a) =>
+            !ReadOnly.Contains(command) && !(command == "leftovers" && !a.Flag("--delete"));
+
+        /// <summary>The same; refused is the refusal, for the window to say in its own words.</summary>
+        public static int Run(string[] argv, TextWriter output, TextWriter err, out ModError refused)
+        {
+            refused = null;
+            if (argv.Length == 0) { err.WriteLine(Usage()); err.WriteLine("hd2qd: error: a command is required"); return 2; }
+            if (argv[0] == "--version") { output.WriteLine("hd2-mod-cli " + StateDoc.Version); return 0; }
+            if (argv[0] == "-h" || argv[0] == "--help") { output.WriteLine(Help()); return 0; }
+            var spec = Specs.FirstOrDefault(s => s.Key == argv[0]).Value;
+            if (spec == null)
+            {
+                err.WriteLine(Usage());
+                err.WriteLine("hd2qd: error: no command " + Ops.Repr(argv[0]));
+                return 2;
+            }
+            Args a;
+            try
+            {
+                if (argv.Skip(1).Any(x => x == "-h" || x == "--help")) { output.WriteLine(CommandHelp(argv[0], spec)); return 0; }
+                a = Parse(spec, argv.Skip(1).ToArray());
+            }
+            catch (UsageError e)
+            {
+                err.WriteLine(CommandHelp(argv[0], spec).Split('\n')[0].TrimEnd());
+                err.WriteLine("hd2qd " + argv[0] + ": error: " + e.Message);
+                return 2;
+            }
+            try
+            {
+                if (Writes(argv[0], a))
+                {
+                    var elsewhere = Store.Redirected();
+                    if (elsewhere != null)
+                        throw new ModError("this was started from inside a packaged app, and Windows sends its writes to " +
+                                           "AppData to that app's own copy (" + elsewhere + "), which no other program reads: " +
+                                           "the library would split in two. Run it from your own terminal or the window.", "redirected");
+                }
+                spec.Run(a, output);
+                return 0;
+            }
+            catch (ModError e)
+            {
+                err.WriteLine("hd2qd: " + e.Message);
+                refused = e;
+                return 1;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is System.ComponentModel.Win32Exception
+                                      || e is FormatException || e is InvalidDataException)
+            {
+                err.WriteLine("hd2qd: " + e.Message);
+                return 1;
+            }
+        }
+
+        static Args Parse(Spec spec, string[] argv)
+        {
+            var a = new Args();
+            var pos = new List<string>();
+            bool onlyPositionals = false;
+            for (int i = 0; i < argv.Length; i++)
+            {
+                var x = argv[i];
+                if (!onlyPositionals && x == "--") { onlyPositionals = true; continue; }
+                if (!onlyPositionals && x.StartsWith("-") && x.Length > 1 && !IsNumber(x))
+                {
+                    string name = x, inline = null;
+                    int eq = x.IndexOf('=');
+                    if (x.StartsWith("--") && eq > 0) { name = x.Substring(0, eq); inline = x.Substring(eq + 1); }
+                    if (spec.Flags.Contains(name) && inline == null) a.Flags.Add(name == "-v" ? "--verbose" : name);
+                    else if (spec.Values.Contains(name))
+                    {
+                        if (inline == null)
+                        {
+                            if (i + 1 >= argv.Length) throw new UsageError("argument " + name + ": expected one argument");
+                            inline = argv[++i];
+                        }
+                        a.Values[name] = inline;
+                    }
+                    else throw new UsageError("unrecognized arguments: " + x);
+                    continue;
+                }
+                pos.Add(x);
+            }
+            var given = spec.OneOf.Where(o => a.Flags.Contains(o) || a.Values.ContainsKey(o)).ToList();
+            if (given.Count > 1) throw new UsageError("argument " + given[1] + ": not allowed with argument " + given[0]);
+            int need = spec.Positionals.Length;
+            if (pos.Count < need || (!spec.Many && pos.Count > need))
+            {
+                if (pos.Count > need) throw new UsageError("unrecognized arguments: " + string.Join(" ", pos.Skip(need)));
+                throw new UsageError("the following arguments are required: " + string.Join(", ", spec.Positionals.Skip(pos.Count)));
+            }
+            for (int i = 0; i < need; i++) a.Pos[spec.Positionals[i]] = pos[i];
+            if (spec.Many) a.Rest = pos.Skip(need - 1).ToList();
+            if (a.Values.TryGetValue("--to", out var to) && !int.TryParse(to, out _))
+                throw new UsageError("argument --to: invalid int value: " + Ops.Repr(to));
+            if (a.Pos.TryGetValue("value", out var v) && v != "on" && v != "off")
+                throw new UsageError("argument value: invalid choice: " + Ops.Repr(v) + " (choose from 'on', 'off')");
+            return a;
+        }
+
+        static bool IsNumber(string x) => x.Length > 1 && x.Skip(1).All(char.IsDigit);
+
+        // ------------------------------------------------------------ the commands
+
+        static void Init(Args a, TextWriter o)
+        {
+            var cfg = Store.Config();
+            // --game may name the game folder, its data or its bin; a saved folder that is
+            // gone is looked for again
+            var given = a.Value("--game");
+            var g = !string.IsNullOrEmpty(given) ? Ops.GameFolderOf(given) : Ops.GameFolderOf(Json.Str(cfg, "game_dir")) ?? Ops.FindGame();
+            if (g == null)
+                throw new ModError(!string.IsNullOrEmpty(given)
+                    ? "not Helldivers 2's folder (it has no data folder): " + given
+                    : "the game folder was not found: pass --game \"<...>\\steamapps\\common\\Helldivers 2\"", "no_game");
+            cfg["game_dir"] = Paths.Abs(g);
+            if (!string.IsNullOrEmpty(a.Value("--mods-dir"))) cfg["mods_dir"] = Paths.Abs(a.Value("--mods-dir"));
+            Store.Save("config.json", cfg);
+            o.WriteLine("game: " + cfg["game_dir"]);
+            o.WriteLine("library folder for zips: " + Store.ModsDir(cfg));
+            o.WriteLine("settings: " + Store.Home);
+        }
+
+        static void ImportArsenal(Args a, TextWriter o)
+        {
+            var (theirs, g) = Ops.ImportArsenal(a.Value("--file"), a.Value("--profile"));
+            Import(theirs, a.Flag("--replace"), "HD2 Arsenal", o,
+                   Ops.ArsenalTopWins(a.Value("--file"))
+                       ? "HD2 Arsenal gives its first mod the highest priority: the list came in the other way round, so the same mods win as there."
+                       : null);
+            var cfg = Store.Config();
+            if (!string.IsNullOrEmpty(g) && string.IsNullOrEmpty(Json.Str(cfg, "game_dir")))
+            {
+                cfg["game_dir"] = g;
+                Store.Save("config.json", cfg);
+            }
+        }
+
+        static void ImportHd2mm(Args a, TextWriter o) => Import(Importers.ReadHd2mm(a.Value("--dir")), a.Flag("--replace"), "HD2ModManager", o);
+
+        static void ImportEchelon(Args a, TextWriter o) => Import(Importers.ReadEchelon(a.Value("--file")), a.Flag("--replace"), "Echelon", o);
+
+        /// <summary>Another manager's list into the library: added (the mods not in it yet), or, with
+        /// replace, instead of it.</summary>
+        static void Import(Library theirs, bool replace, string who, TextWriter o, string note = null)
+        {
+            var lib = replace ? new Library() : Library.Load();
+            bool hadMods = lib.Mods.Count > 0;
+            var (added, skipped) = Importers.Merge(lib, theirs);
+            foreach (var m in added) Importers.CopyPictures(m);
+            lib.Save();
+            o.WriteLine(added.Count + " mods added from " + who + " (" + added.Count(m => m.Enabled) + " on), " + skipped.Count +
+                        " already in the library. " + who + "'s files were only read.");
+            if (note != null && added.Count > 0) o.WriteLine(note);
+            // mods from another manager meet the ones already here for the first time
+            int cross = hadMods && added.Count > 0 ? Importers.CrossClashes(lib, added.ToDictionary(m => m.Id, m => 1)) : 0;
+            if (cross > 0)
+                o.WriteLine(cross + (cross == 1 ? " conflict" : " conflicts") + " between mods from " + who +
+                            " and mods already in the library: the one lower in the list, from " + who + ", wins. See them with: hd2qd conflicts");
+            o.WriteLine("From now on deploy with hd2qd only: a deploy from " + who + " would undo this one's.");
+        }
+
+        static void FoldersCmd(Args a, TextWriter o)
+        {
+            foreach (var f in Storage.Folders(Library.Load(), Store.GameDir(null, false)))
+                o.WriteLine((f.IsDefault ? "* " : "  ") + f.Path + "  [" + f.Mods.Count + " mods, " + f.Bytes + " bytes; drive " + f.Drive + " " + f.Free + " free" +
+                            (f.GameDrive ? "; the game's drive: hard links" : "; another drive than the game: copies") + (f.InAppData ? "; in AppData" : "") + "]");
+        }
+
+        static void RelocateCmd(Args a, TextWriter o)
+        {
+            var to = a.Value("--into");
+            if (string.IsNullOrEmpty(to)) throw new ModError("say where: --into FOLDER");
+            var lib = Library.Load();
+            var mods = a.Rest.Select(r => Ops.Pick(lib, r)).Distinct().ToList();
+            var g = Store.GameDir(null, false);
+            var moved = Storage.Move(lib, mods, to, a.Flag("--keep"), g);
+            foreach (var (m, from, dest) in moved) o.WriteLine((a.Flag("--keep") ? "copied " : "moved ") + m.Name + ": " + from + " -> " + dest);
+            if (moved.Count > 0 && g != null)
+            {
+                try
+                {
+                    var r = Deploy.Relink(Library.Load(), g);
+                    if (r.Linked > 0) o.WriteLine(r.Linked + " copies in the game are hard links now: " + r.Bytes + " bytes came back");
+                }
+                catch (ModError e) { o.WriteLine("the game's copies stay copies for now (" + e.Message + "): run  hd2qd relink  later"); }
+            }
+        }
+
+        static void List(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var files = new Dictionary<string, List<string>>();
+            if (a.Flag("--files"))
+                foreach (var w in Deploy.Plan(lib))
+                {
+                    if (!files.TryGetValue(w.Mod, out var l)) files[w.Mod] = l = new List<string>();
+                    l.Add(w.Name);
+                }
+            int i = 0;
+            foreach (var m in lib.Mods)
+            {
+                o.WriteLine((++i).ToString().PadLeft(3) + " " + (m.Enabled ? "[x]" : "[ ]") + " " + m.Name);
+                if (a.Flag("--paths")) o.WriteLine("        " + m.Path);
+                if (files.TryGetValue(m.Name, out var mine))
+                    foreach (var f in mine.Where(f => Deploy.Patch.IsMatch(f))) o.WriteLine("        " + f);
+            }
+        }
+
+        static void Add(Args a, TextWriter o)
+        {
+            var cfg = Store.Config();
+            var lib = Library.Load();
+            var path = a.Pos["path"];
+            var folder = Ops.SourceFolder(path, cfg, a.Flag("--copy"));
+            var mod = Ops.NewMod(folder, a.Value("--name"), Paths.Abs(path));
+            if (File.Exists(path)) Origins.FromFile(mod, path);               // a download: where it came from
+            if (lib.Mods.Any(m => m.Name == mod.Name))
+                throw new ModError("a mod named " + Ops.Repr(mod.Name) + " is in the library: use  hd2qd replace  or --name", "duplicate", mod.Name);
+            lib.Mods.Add(mod);
+            lib.Save();
+            o.WriteLine("added " + lib.Mods.Count + " " + mod.Name + "  (" + folder + ")");
+        }
+
+        static void Replace(Args a, TextWriter o)
+        {
+            var cfg = Store.Config();
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            var had = mod.Path;
+            var folder = Ops.SourceFolder(a.Pos["path"], cfg, a.Flag("--copy"));
+            var manifest = Manifest.Read(folder);
+            mod.Options = Manifest.Merged(manifest, mod.Options);
+            mod.Path = folder;
+            mod.Source = Paths.Abs(a.Pos["path"]);
+            if (File.Exists(a.Pos["path"]))
+            {
+                var fresh = new Mod();
+                Origins.FromFile(fresh, a.Pos["path"]);
+                if (fresh.Nexus != null || fresh.GitHub != null || fresh.Page != null) { mod.Nexus = fresh.Nexus; mod.GitHub = fresh.GitHub; mod.Page = fresh.Page; }
+            }
+            if (!string.IsNullOrEmpty(a.Value("--name"))) mod.Name = a.Value("--name");
+            else if (!string.IsNullOrEmpty(manifest?.Name))
+            {
+                // a name the player gave the mod stays; only the name it came with is the new
+                // version's (the user, 2026-10-25: a replace put "Boot Mod Loader v0.9.0" over
+                // the player's "Boot Mod Loader" and left the old version as the name it came with)
+                if (mod.RealName != null) mod.RealName = string.Equals(manifest.Name, mod.Name, StringComparison.Ordinal) ? null : manifest.Name;
+                else mod.Name = manifest.Name;
+            }
+            lib.Save();
+            o.WriteLine("replaced: " + mod.Name + "  (" + folder + "), same place and options");
+            if (!a.Flag("--keep-old")) DropOld(lib, cfg, had, folder, o);
+        }
+
+        /// <summary>The folder the old version was unpacked into, once the library no longer
+        /// points at it: an armour pack leaves hundreds of megabytes behind otherwise (the user,
+        /// 2026-10-25). Only a folder this program unpacked itself, and only when no other mod
+        /// uses it.</summary>
+        static void DropOld(Library lib, Dictionary<string, object> cfg, string had, string now, TextWriter o)
+        {
+            if (string.IsNullOrEmpty(had) || string.Equals(Paths.Abs(had), Paths.Abs(now), StringComparison.OrdinalIgnoreCase)) return;
+            if (lib.Mods.Any(m => !string.IsNullOrEmpty(m.Path) && string.Equals(Paths.Abs(m.Path), Paths.Abs(had), StringComparison.OrdinalIgnoreCase))) return;
+            if (!Ops.Ours(had, cfg)) return;
+            if (Ops.Drop(had)) o.WriteLine("the old version's folder is gone: " + had);
+        }
+
+        static void LeftoverCmd(Args a, TextWriter o)
+        {
+            var cfg = Store.Config();
+            var lib = Library.Load();
+            var left = Ops.Leftovers(lib, cfg);
+            if (!a.Flag("--delete"))
+            {
+                if (left.Count == 0) { o.WriteLine("no folders of old versions are left over"); return; }
+                foreach (var d in left) o.WriteLine(StateDoc.LibraryBytes(new DirectoryInfo(d)).ToString().PadLeft(12) + " bytes  " + d);
+                return;
+            }
+            var named = a.Rest.Select(x => (x ?? "").Trim()).Where(x => x.Length > 0).ToList();
+            if (named.Count == 0 && !a.Flag("--all")) throw new ModError("name the folders to delete, or pass --all");
+            var go = named.Count > 0
+                ? left.Where(d => named.Any(n => string.Equals(Paths.Abs(d), Paths.Abs(n), StringComparison.OrdinalIgnoreCase)
+                                             || string.Equals(System.IO.Path.GetFileName(d), n, StringComparison.OrdinalIgnoreCase))).ToList()
+                : left;
+            if (go.Count == 0) throw new ModError("no folder of an old version goes by that name");
+            long freed = 0;
+            int n = 0;
+            foreach (var d in go)
+            {
+                var size = StateDoc.LibraryBytes(new DirectoryInfo(d));
+                if (!Ops.Drop(d)) { o.WriteLine("cannot delete (in use?): " + d); continue; }
+                freed += size;
+                n++;
+            }
+            o.WriteLine("deleted " + n + " folder" + (n == 1 ? "" : "s") + ": " + freed + " bytes came back; the game is untouched");
+        }
+
+        /// <summary>A name of the player's own for a mod (the user, 2026-10-24). The name it came
+        /// with is kept, so the details can say both; renaming it back to that name drops it.</summary>
+        static void Rename(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            var name = (a.Pos["name"] ?? "").Trim();
+            if (name.Length == 0) throw new ModError("a mod needs a name", "no_name");
+            if (lib.Mods.Any(x => x != mod && string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)))
+                throw new ModError("another mod is already called " + Ops.Repr(name), "name_taken");
+            var was = mod.Name;
+            if (string.Equals(name, was, StringComparison.Ordinal)) { o.WriteLine("already called " + Ops.Repr(name)); return; }
+            if (mod.RealName == null) mod.RealName = was;
+            mod.Name = name;
+            if (string.Equals(mod.RealName, name, StringComparison.Ordinal)) mod.RealName = null;
+            lib.Save();
+            o.WriteLine("renamed " + Ops.Repr(was) + " to " + Ops.Repr(name));
+        }
+
+        /// <summary>A mod matched against its own source, the way a reference manager fills a paper
+        /// in (the user, 2026-10-24). --all does every mod that has a source worth asking.</summary>
+        static void Match(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mods = a.Flag("--all") ? lib.Mods.Where(m => m.Nexus != null || m.GitHub != null).ToList()
+                                       : new List<Mod> { Ops.Pick(lib, a.Pos["mod"]) };
+            int done = 0;
+            foreach (var mod in mods)
+            {
+                var was = mod.Name;
+                try
+                {
+                    var said = Site.Fill(lib, mod);
+                    done++;
+                    o.WriteLine(was + ": " + (said.Count == 0 ? "already as the site has it" : string.Join("; ", said)));
+                }
+                catch (ModError e)
+                {
+                    if (mods.Count == 1) throw;
+                    o.WriteLine(was + ": " + e.Message);
+                }
+            }
+            if (done > 0) lib.Save();
+        }
+
+        // ------------------------------------------------------------ the player's own labels
+
+        static List<string> Names(Args a) =>
+            a.Rest.Skip(1).Select(x => (x ?? "").Trim()).Where(x => x.Length > 0).ToList();
+
+        static void TagNew(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var name = (a.Pos["name"] ?? "").Trim();
+            if (name.Length == 0) throw new ModError("a label needs a name", "no_name");
+            if (!lib.Tags.Any(t => string.Equals(t, name, StringComparison.CurrentCultureIgnoreCase)) &&
+                !lib.Mods.Any(m => m.Tags.Any(t => string.Equals(t, name, StringComparison.CurrentCultureIgnoreCase))))
+            {
+                lib.Tags.Add(name);
+                lib.Save();
+                o.WriteLine("new label: " + name);
+                return;
+            }
+            o.WriteLine("already a label: " + name);
+        }
+
+        static void TagList(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var counts = lib.Tags.Select(t => (Name: t, N: 0)).ToList();
+            foreach (var mod in lib.Mods)
+                foreach (var t in mod.Tags)
+                {
+                    int i = counts.FindIndex(x => string.Equals(x.Name, t, StringComparison.OrdinalIgnoreCase));
+                    if (i < 0) counts.Add((t, 1));
+                    else counts[i] = (counts[i].Name, counts[i].N + 1);
+                }
+            foreach (var (name, n) in counts.OrderByDescending(x => x.N).ThenBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase))
+                o.WriteLine(n.ToString().PadLeft(4) + "  " + name);
+            if (counts.Count == 0) o.WriteLine("no labels yet");
+        }
+
+        static void Tag(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Rest[0]);
+            var names = Names(a);
+            if (names.Count == 0) { o.WriteLine(mod.Name + ": " + (mod.Tags.Count == 0 ? "no labels" : string.Join(", ", mod.Tags))); return; }
+            foreach (var name in names)
+            {
+                if (!mod.Tags.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))) mod.Tags.Add(name);
+                if (!lib.Tags.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))) lib.Tags.Add(name);
+            }
+            lib.Save();
+            o.WriteLine(mod.Name + ": " + string.Join(", ", mod.Tags));
+        }
+
+        /// <summary>One label onto several mods in one call, so a library can be labelled in
+        /// one go instead of mod by mod (the user's tester, 2026-10-25).</summary>
+        static void TagMany(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var name = (a.Pos["name"] ?? "").Trim();
+            if (name.Length == 0) throw new ModError("a label needs a name");
+            var mods = a.Rest.Skip(1).Select(x => (x ?? "").Trim()).Where(x => x.Length > 0).Select(x => Ops.Pick(lib, x)).ToList();
+            if (mods.Count == 0) throw new ModError("tag-many needs at least one mod");
+            foreach (var mod in mods)
+                if (!mod.Tags.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))) mod.Tags.Add(name);
+            if (!lib.Tags.Any(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase))) lib.Tags.Add(name);
+            lib.Save();
+            o.WriteLine(name + ": " + string.Join(", ", mods.Select(m => m.Name)));
+        }
+
+        static void Untag(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Rest[0]);
+            if (a.Flag("--all")) mod.Tags.Clear();
+            else foreach (var name in Names(a)) mod.Tags.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase));
+            lib.Save();
+            o.WriteLine(mod.Name + ": " + (mod.Tags.Count == 0 ? "no labels" : string.Join(", ", mod.Tags)));
+        }
+
+        static void TagRename(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var was = a.Pos["name"];
+            var now = (a.Pos["to"] ?? "").Trim();
+            if (now.Length == 0) throw new ModError("a label needs a name", "no_name");
+            int n = 0;
+            foreach (var mod in lib.Mods)
+                for (int i = 0; i < mod.Tags.Count; i++)
+                    if (string.Equals(mod.Tags[i], was, StringComparison.OrdinalIgnoreCase))
+                    {
+                        mod.Tags[i] = now;
+                        n++;
+                    }
+            for (int i = 0; i < lib.Tags.Count; i++)
+                if (string.Equals(lib.Tags[i], was, StringComparison.OrdinalIgnoreCase)) lib.Tags[i] = now;
+            lib.Tags = lib.Tags.Distinct(StringComparer.CurrentCultureIgnoreCase).ToList();
+            foreach (var mod in lib.Mods)
+            {
+                var seen = new List<string>();
+                foreach (var t in mod.Tags) if (!seen.Any(x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase))) seen.Add(t);
+                mod.Tags.Clear();
+                mod.Tags.AddRange(seen);
+            }
+            lib.Save();
+            o.WriteLine("renamed the label on " + n + " mods: " + was + " -> " + now);
+        }
+
+        static void TagDelete(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var name = a.Pos["name"];
+            int n = lib.Mods.Count(m => m.Tags.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase)) > 0);
+            lib.Tags.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase));
+            lib.Save();
+            o.WriteLine("took the label off " + n + " mods: " + name);
+        }
+
+        static void Remove(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            lib.Mods.Remove(mod);
+            lib.Save();
+            o.WriteLine("removed " + mod.Name + " (its files stay where they are; deploy to take it out of the game)");
+        }
+
+
+
+        static void CheckUpdatesCmd(Args a, TextWriter o)
+        {
+            foreach (var u in Updates.Check(Library.Load()))
+                o.WriteLine(u.Status.PadRight(9) + " " + u.Name + (u.Channel != null ? "  [" + u.Channel + "]" : "") +
+                            (u.Status == "update" ? "  " + (u.Current ?? "?") + " -> " + (u.Latest ?? "?") + "  " + u.Page : "") +
+                            (u.Why != null ? "  (" + u.Why + ")" : ""));
+        }
+
+        static void UpdateCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            var u = Updates.Check(new Library { Mods = { mod } }).First();
+            if (u.Status != "update") throw new ModError(mod.Name + ": no newer version found (" + u.Status + (u.Why != null ? ", " + u.Why : "") + ")", "no_update");
+            if (mod.GitHub != null) { o.WriteLine("updated: " + Updates.ApplyGitHub(mod.Id, u).Name + " " + u.Latest); return; }
+            throw new ModError(mod.Name + ": no newer version found", "no_update");
+        }
+
+        static void SourceCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Rest[0]);
+            if (a.Flag("--clear")) { mod.Nexus = null; mod.GitHub = null; mod.Page = null; }
+            else if (a.Rest.Count < 2 || !Origins.FromUrl(mod, a.Rest[1])) throw new ModError("give an address: a Nexus Mods page or a GitHub repository", "bad_url");
+            lib.Save();
+            var (channel, page) = Origins.Of(mod);
+            o.WriteLine(mod.Name + ": " + (channel == null ? "no source" : channel + "  " + page));
+        }
+
+        static void DeleteCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            var g = Store.GameDir();
+            if (!a.Flag("--yes"))
+                throw new ModError("this deletes " + Paths.Abs(mod.Path) + " for good and takes " + mod.Name + " out of the game: add --yes");
+            var (r, folder, bytes) = Ops.DeleteMod(lib, mod, g);
+            o.WriteLine("deleted " + mod.Name + ": out of the library; deploy kept " + r.Kept + ", moved " + r.Moved + ", deleted " + r.Deleted +
+                        "; folder " + folder + " deleted (" + bytes + " bytes)");
+        }
+
+        static void Switch(Args a, TextWriter o, bool on)
+        {
+            var lib = Library.Load();
+            foreach (var r in a.Rest)
+            {
+                var mod = Ops.Pick(lib, r);
+                mod.Enabled = on;
+                o.WriteLine((on ? "on " : "off") + " " + mod.Name);
+            }
+            lib.Save();
+        }
+
+        static void Move(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            var mods = lib.Mods;
+            string before = a.Value("--before"), after = a.Value("--after");
+            Mod other = null;
+            if (!string.IsNullOrEmpty(before) || !string.IsNullOrEmpty(after))
+            {
+                other = Ops.Pick(lib, !string.IsNullOrEmpty(before) ? before : after);
+                if (other == mod) throw new ModError("a mod cannot move next to itself");
+            }
+            mods.Remove(mod);
+            int to = a.Value("--to") != null ? int.Parse(a.Value("--to")) : 0;
+            if (a.Flag("--top")) mods.Insert(0, mod);
+            else if (a.Flag("--bottom")) mods.Add(mod);
+            else if (!string.IsNullOrEmpty(before)) mods.Insert(mods.IndexOf(other), mod);
+            else if (!string.IsNullOrEmpty(after)) mods.Insert(mods.IndexOf(other) + 1, mod);
+            else if (to != 0) mods.Insert(Math.Max(0, Math.Min(mods.Count, to - 1)), mod);
+            else throw new ModError("say where: --top, --bottom, --to N, --before MOD or --after MOD");
+            lib.Save();
+            o.WriteLine((mods.IndexOf(mod) + 1) + " " + mod.Name);
+        }
+
+        static void PrintOptions(Mod mod, TextWriter o)
+        {
+            var chosen = Manifest.Merged(Manifest.Of(mod), mod.Options);
+            if (chosen.Count == 0)
+            {
+                o.WriteLine(mod.Name + " has no options");
+                return;
+            }
+            for (int i = 0; i < chosen.Count; i++)
+            {
+                var c = chosen[i];
+                o.WriteLine((i + 1).ToString().PadLeft(2) + " " + (c.Enabled ? "[x]" : "[ ]") + " " + c.Name);
+                for (int j = 0; j < c.Subs.Count; j++)
+                    o.WriteLine("     " + (i + 1).ToString().PadLeft(2) + "." + (j + 1) + " " + (c.Subs[j].Enabled ? "(*)" : "( )") + " " + c.Subs[j].Name);
+            }
+        }
+
+        static void Options(Args a, TextWriter o) => PrintOptions(Ops.Pick(Library.Load(), a.Pos["mod"]), o);
+
+        static void Set(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var mod = Ops.Pick(lib, a.Pos["mod"]);
+            var chosen = Manifest.Merged(Manifest.Of(mod), mod.Options);
+            var (opt, sub) = Ops.OptionAt(chosen, a.Pos["option"]);
+            bool value = a.Pos["value"] == "on";
+            if (sub == null) opt.Enabled = value;
+            else if (a.Flag("--only")) foreach (var x in opt.Subs) x.Enabled = x == sub;
+            else sub.Enabled = value;
+            mod.Options = chosen;
+            lib.Save();
+            PrintOptions(Ops.Pick(Library.Load(), a.Pos["mod"]), o);
+        }
+
+        static void DeployCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var g = Store.GameDir();
+            bool dry = a.Flag("--dry-run");
+            var s = Deploy.Run(lib, g, dry, a.Flag("--copy"), a.Flag("--verify"), o.WriteLine);
+            if (dry)
+                o.WriteLine("would keep " + s.Kept + ", move " + s.Moved + ", write " + s.Written + ", delete " + s.Deleted + " of " + s.Files + " files");
+            else
+            {
+                o.WriteLine("kept " + s.Kept + ", moved " + s.Moved + ", wrote " + s.Written + " (" + s.Linked + " linked, " + s.Copied +
+                            " copied), deleted " + s.Deleted + "; " + s.Files + " files in the game");
+                // what was meant to be written is not always what is there: a deploy that was
+                // interrupted, an antivirus, another manager (the user, 2026-10-25)
+                var c = Deploy.Check(lib, g);
+                if (!c.Ok)
+                    o.WriteLine("but the game folder is still not what the library asks for: " + c.Missing.Count + " missing, " +
+                                c.Extra.Count + " that no mod wants, " + c.Changed.Count + " that differ (hd2qd check)");
+            }
+        }
+
+        static void CheckCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var g = Store.GameDir();
+            var c = Deploy.Check(lib, g, a.Flag("--deep"));
+            o.WriteLine(c.Checked + " files checked, " + c.Copies + " of them copies rather than hard links");
+            foreach (var f in c.Missing) o.WriteLine("  missing  " + f);
+            foreach (var f in c.Extra) o.WriteLine("  spare    " + f);
+            foreach (var f in c.Changed) o.WriteLine("  differs  " + f);
+            if (c.Ok) { o.WriteLine("the game folder is exactly what the library asks for"); return; }
+            o.WriteLine(c.Missing.Count + " missing, " + c.Extra.Count + " that no mod wants, " + c.Changed.Count + " that differ");
+            if (c.Wrong.Count > 0)
+                o.WriteLine(c.Wrong.Count + " of them are files a deploy would leave alone: the deploy record is wrong about these");
+            else
+                o.WriteLine("a deploy is on its way to put all of this right: none of it is a file a deploy would leave alone");
+            throw new ModError("the game folder does not match the library: a deploy puts it right", "not_matching");
+        }
+
+        static void Status(Args a, TextWriter o)
+        {
+            a.Flags.Add("--dry-run");
+            DeployCmd(a, o);
+        }
+
+        static void Relink(Args a, TextWriter o)
+        {
+            var r = Deploy.Relink(Library.Load(), Store.GameDir(), a.Flag("--dry-run"), a.Flag("--verify"));
+            if (a.Flag("--dry-run")) o.WriteLine("would link " + r.Candidates + " copies (" + r.Bytes + " bytes come back)");
+            else o.WriteLine("linked " + r.Linked + " copies: " + r.Bytes + " bytes came back, nothing was written");
+        }
+
+        static void Purge(Args a, TextWriter o)
+        {
+            var g = Store.GameDir();
+            if (!a.Flag("--yes")) throw new ModError("this deletes every patch file in " + Paths.Join(g, "data") + ": add --yes");
+            o.WriteLine("deleted " + Deploy.Purge(g) + " files: the game is vanilla");
+        }
+
+        static void Which(Args a, TextWriter o)
+        {
+            var what = a.Pos["what"];
+            var hits = Deploy.Plan(Library.Load()).Where(w => w.Name.IndexOf(what, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                                              w.Mod.IndexOf(what, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+            foreach (var w in hits.Where(w => Deploy.Patch.IsMatch(w.Name)))
+                o.WriteLine(w.Name.PadRight(28) + " " + w.Mod.PadRight(30) + " " + w.Src);
+            if (hits.Count == 0) o.WriteLine("nothing matches " + Ops.Repr(what));
+        }
+
+        static void Conflicts(Args a, TextWriter o)
+        {
+            var found = Deploy.Clashes(Deploy.Plan(Library.Load()));
+            var pairs = new List<(List<string> Mods, bool Same, List<(ulong Type, ulong Id)> Keys)>();
+            foreach (var c in found)
+            {
+                int i = pairs.FindIndex(p => p.Same == c.Same && p.Mods.SequenceEqual(c.Mods));
+                if (i < 0) pairs.Add((c.Mods, c.Same, new List<(ulong, ulong)> { (c.Type, c.Id) }));
+                else pairs[i].Keys.Add((c.Type, c.Id));
+            }
+            foreach (var (mods, same, keys) in pairs.OrderByDescending(p => p.Keys.Count))
+            {
+                o.WriteLine(keys.Count + " resource(s) in " + string.Join(" / ", mods) + " -- " +
+                            (same ? "the very same bytes, nothing is overridden" : mods[mods.Count - 1] + " wins"));
+                if (a.Flag("--verbose"))
+                    foreach (var (t, id) in keys.Take(50)) o.WriteLine("      type " + t.ToString("x16") + "  id " + id.ToString("x16"));
+            }
+            if (found.Count == 0) o.WriteLine("no resource is shipped by two mods");
+        }
+
+        static void State(Args a, TextWriter o) =>
+            o.WriteLine(Json.Write(StateDoc.Build(Library.Load(), Store.GameDir(null, false), a.Flag("--verify")), true));
+    }
+}

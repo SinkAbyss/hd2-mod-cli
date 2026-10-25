@@ -1,0 +1,192 @@
+<Window x:Class="QuickDeploy.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="HD2 Mod Quick Deploy" Width="1440" Height="900" MinWidth="1200" MinHeight="600"
+        Background="{StaticResource Ground900}" Foreground="{StaticResource Ink}" FontFamily="{StaticResource Ui}"
+        FontSize="14" WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True" SnapsToDevicePixels="True" Icon="app.ico">
+  <!-- the design board's Manager (gui\design\Manager.dc.html) in HD2 Mod Setting
+       GUI's colours; the system's frame kept, its caption drawn by the window -->
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="72" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1"
+                  CornerRadius="0" UseAeroCaptionButtons="False"/>
+  </WindowChrome.WindowChrome>
+
+  <Border x:Name="Frame" BorderBrush="{StaticResource Grid}" BorderThickness="1">
+    <DockPanel>
+      <!-- the header -->
+      <Border DockPanel.Dock="Top" Background="{StaticResource Ground700}" BorderBrush="{StaticResource Grid}"
+              BorderThickness="0,0,0,1" Height="72">
+        <Grid>
+          <DockPanel LastChildFill="False">
+          <!-- this window's own mark, the one on its icon: a mod going into the game. The
+               hazard tape belongs to HD2 Mod Setting GUI, another window (the user, 2026-10-24) -->
+          <Canvas DockPanel.Dock="Left" Width="32" Height="32" Margin="24,0,12,0" VerticalAlignment="Center">
+            <Path Data="M5,17 V28 H27 V17" Stroke="{StaticResource Ink}" StrokeThickness="3.5"
+                  StrokeStartLineCap="Square" StrokeEndLineCap="Square"/>
+            <Path Data="M12.5,3 H19.5 V13 H25 L16,23 L7,13 H12.5 Z" Fill="{StaticResource Yellow}"/>
+          </Canvas>
+          <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
+            <TextBlock x:Name="TitleText" FontSize="22" FontWeight="Bold"/>
+            <TextBlock x:Name="SummaryText" Style="{StaticResource MonoText}"/>
+          </StackPanel>
+          <Button x:Name="CloseBtn" DockPanel.Dock="Right" Style="{StaticResource CaptionClose}" Click="Close_Click">
+            <Path Data="M0,0 L10,10 M10,0 L0,10" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.2"/>
+          </Button>
+          <Button x:Name="MaxBtn" DockPanel.Dock="Right" Style="{StaticResource Caption}" Click="Max_Click">
+            <Path x:Name="MaxGlyph" Data="M0.5,0.5 H9.5 V9.5 H0.5 Z" Stroke="{StaticResource Ink}" StrokeThickness="1"/>
+          </Button>
+          <Button x:Name="MinBtn" DockPanel.Dock="Right" Style="{StaticResource Caption}" Click="Min_Click">
+            <Path Data="M0,0.5 H10" Stroke="{StaticResource Ink}" StrokeThickness="1"/>
+          </Button>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,28,0">
+            <!-- the settings: the language, the explaining lines, where this comes from -->
+            <Button x:Name="SettingsBtn" Width="40" Height="40" VerticalAlignment="Center" Margin="0,0,28,0" Cursor="Hand"
+                    Style="{StaticResource Ghost}" Padding="0" Click="Settings_Click"
+                    WindowChrome.IsHitTestVisibleInChrome="True">
+              <!-- eight teeth around (12,12), and the hole cut out of it there: both are drawn
+                   about that one centre, so the hole sits in the middle whatever the size -->
+              <Path Data="F0 M18.93,9.41 L21.82,10.09 L21.82,13.91 L18.93,14.59 L18.73,15.07 L20.29,17.59 L17.59,20.29 L15.07,18.73 L14.59,18.93 L13.91,21.82 L10.09,21.82 L9.41,18.93 L8.93,18.73 L6.41,20.29 L3.71,17.59 L5.27,15.07 L5.07,14.59 L2.18,13.91 L2.18,10.09 L5.07,9.41 L5.27,8.93 L3.71,6.41 L6.41,3.71 L8.93,5.27 L9.41,5.07 L10.09,2.18 L13.91,2.18 L14.59,5.07 L15.07,5.27 L17.59,3.71 L20.29,6.41 L18.73,8.93 Z M12,8.6 A3.4,3.4 0 1,1 12,15.4 A3.4,3.4 0 1,1 12,8.6 Z"
+                    Fill="{StaticResource Ink}" Width="20" Height="20" Stretch="Uniform"/>
+            </Button>
+            <!-- what is deployed as hard links now. What they have saved over all deploys adds
+                 up to a number too big for a caption, so it lives on the storage page -->
+            <StackPanel HorizontalAlignment="Right">
+              <TextBlock x:Name="StatLinksLabel" FontSize="12" Foreground="{StaticResource Muted}" HorizontalAlignment="Right"/>
+              <TextBlock x:Name="StatLinks" FontFamily="{StaticResource Mono}" FontSize="16" FontWeight="Bold" Foreground="{StaticResource Blue}" HorizontalAlignment="Right"/>
+            </StackPanel>
+          </StackPanel>
+          </DockPanel>
+          <!-- the three pages, in the middle of the window (the user, 2026-10-24). They are
+               used often, so each is a wide target -->
+          <Border BorderBrush="{StaticResource Grid}" BorderThickness="1" HorizontalAlignment="Center"
+                  VerticalAlignment="Center" WindowChrome.IsHitTestVisibleInChrome="True">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton x:Name="PageDeploy" Style="{StaticResource Segment}" MinWidth="104" GroupName="page" IsChecked="True" Click="Page_Click"/>
+              <RadioButton x:Name="PageDownload" Style="{StaticResource Segment}" MinWidth="104" GroupName="page" Click="Page_Click"/>
+              <RadioButton x:Name="PageStorage" Style="{StaticResource Segment}" MinWidth="104" GroupName="page" Click="Page_Click"/>
+              <RadioButton x:Name="PageTags" Style="{StaticResource Segment}" MinWidth="104" GroupName="page" Click="Page_Click"/>
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Border>
+
+      <!-- the footer: the status and the deploy -->
+      <Border DockPanel.Dock="Bottom" Background="{StaticResource Ground700}" BorderBrush="{StaticResource Grid}" BorderThickness="0,1,0,0">
+        <DockPanel Margin="24,12">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <!-- no purge here: a deploy never needs one first (the user, 2026-10-24: break the
+                 habit); it is at the bottom of the deploy target card -->
+            <Button x:Name="DeployBtn" Style="{StaticResource Primary}" MinHeight="44" MinWidth="160" Click="Deploy_Click"/>
+            <Button x:Name="LaunchBtn" Style="{StaticResource Ghost}" MinHeight="44" Margin="8,0,0,0" MinWidth="120" Click="Launch_Click"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Ellipse x:Name="FootDot" Width="8" Height="8" Fill="{StaticResource Muted}" Margin="0,0,8,0"/>
+            <TextBlock x:Name="FootText" FontFamily="{StaticResource Mono}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+          </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <Grid>
+      <Grid x:Name="Body">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="232"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="392"/>
+        </Grid.ColumnDefinitions>
+        <!-- the filters and the deploy target -->
+        <Border Grid.Column="0" BorderBrush="{StaticResource Grid}" BorderThickness="0,0,1,0">
+          <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+            <StackPanel x:Name="Nav" Margin="16,24,16,24"/>
+          </ScrollViewer>
+        </Border>
+        <!-- the list -->
+        <DockPanel Grid.Column="1" Margin="24,24,24,0">
+          <DockPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button x:Name="UpdatesBtn" Style="{StaticResource Ghost}" MinHeight="44" Margin="0,0,8,0" Click="Updates_Click"/>
+              <Button x:Name="AddBtn" Style="{StaticResource Ghost}" MinHeight="44" Click="Add_Click"/>
+              <Button x:Name="RefreshBtn" Style="{StaticResource Ghost}" MinHeight="44" Margin="8,0,0,0" Click="Refresh_Click"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,4,0,0">
+              <TextBlock x:Name="ListTitle" FontSize="28" FontWeight="Bold" VerticalAlignment="Center"/>
+              <!-- to the top of the list and to the end of it: new mods are at the end -->
+              <Button x:Name="TopBtn" Width="34" Height="34" Margin="16,0,0,4.5" VerticalAlignment="Center" Click="Top_Click"/>
+              <Button x:Name="BottomBtn" Width="34" Height="34" Margin="2,0,0,4.5" VerticalAlignment="Center" Click="Bottom_Click"/>
+            </StackPanel>
+          </DockPanel>
+          <!-- the search field, with the two filters inside it on the left: where a mod comes
+               from and what it is, then the player's own labels -->
+          <Border DockPanel.Dock="Top" Margin="0,0,0,12" Background="{StaticResource Ground900}"
+                  BorderBrush="{StaticResource Grid}" BorderThickness="1">
+            <DockPanel>
+              <Button x:Name="FilterBtn" DockPanel.Dock="Left" Style="{StaticResource InField}" Click="Filter_Click"/>
+              <Border DockPanel.Dock="Left" Width="1" Background="{StaticResource Grid}" Margin="0,7,0,7"/>
+              <Button x:Name="TagFilterBtn" DockPanel.Dock="Left" Style="{StaticResource InField}" Click="TagFilter_Click"/>
+              <Border DockPanel.Dock="Left" Width="1" Background="{StaticResource Grid}" Margin="0,7,0,7"/>
+              <Button x:Name="SearchClear" DockPanel.Dock="Right" Content="✕" Width="32" Style="{StaticResource InField}"
+                      Padding="0" Visibility="Collapsed" Click="SearchClear_Click"/>
+              <Grid>
+                <TextBox x:Name="SearchBox" Background="Transparent" Foreground="{StaticResource Ink}" CaretBrush="{StaticResource Ink}"
+                         BorderThickness="0" Padding="10,8,8,8" FontSize="14" VerticalContentAlignment="Center" TextChanged="Search_Changed"/>
+                <TextBlock x:Name="SearchHint" IsHitTestVisible="False" Foreground="{StaticResource Muted}" FontSize="14" Margin="12,0,0,0" VerticalAlignment="Center"/>
+              </Grid>
+            </DockPanel>
+          </Border>
+          <TextBlock x:Name="ListHint" DockPanel.Dock="Bottom" FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,12,0,16"/>
+          <!-- the list, with the dragged row's picture over it (DragLayer) and, while mods
+               are dragged in from Explorer, what dropping them would do (DropHint) -->
+          <Grid x:Name="ListArea" AllowDrop="True" DragEnter="List_DragOver" DragOver="List_DragOver"
+                DragLeave="List_DragLeave" Drop="List_Drop">
+            <Border BorderBrush="{StaticResource Grid}" BorderThickness="1" Background="{StaticResource Ground700}">
+              <ScrollViewer x:Name="ListScroll" VerticalScrollBarVisibility="Auto" Focusable="False">
+                <StackPanel x:Name="List"/>
+              </ScrollViewer>
+            </Border>
+            <!-- over the list while the library cannot be read: the list under it is from
+                 before and must not be shown as though it were the library now -->
+            <Border x:Name="LostBox" Visibility="Collapsed" Background="{StaticResource Ground700}"
+                    BorderBrush="{StaticResource Yellow}" BorderThickness="1">
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="560">
+                <TextBlock x:Name="LostTitle" Foreground="{StaticResource Yellow}" FontSize="18" FontWeight="Bold"
+                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+                <TextBlock x:Name="LostWhy" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,10,0,0"
+                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+              </StackPanel>
+            </Border>
+            <Canvas x:Name="DragLayer" IsHitTestVisible="False" ClipToBounds="True"/>
+            <Border x:Name="DropHint" Visibility="Collapsed" IsHitTestVisible="False" Opacity="0.94"
+                    Background="{StaticResource Ground900}" BorderBrush="{StaticResource Yellow}" BorderThickness="2">
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock x:Name="DropHintText" FontSize="22" FontWeight="Bold" Foreground="{StaticResource Yellow}"
+                           HorizontalAlignment="Center" TextAlignment="Center"/>
+                <TextBlock x:Name="DropHintWhat" FontSize="13" Foreground="{StaticResource Ink}" Margin="24,8,24,0"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </DockPanel>
+        <!-- the chosen mod -->
+        <Border Grid.Column="2" Background="{StaticResource Ground700}" BorderBrush="{StaticResource Grid}" BorderThickness="1,0,0,0">
+          <ScrollViewer x:Name="DetailScroll" VerticalScrollBarVisibility="Auto" Focusable="False">
+            <StackPanel x:Name="Detail" Margin="24"/>
+          </ScrollViewer>
+        </Border>
+      </Grid>
+      <!-- the storage page: the mod folders, as Steam's library folders -->
+      <ScrollViewer x:Name="StoragePage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Focusable="False">
+        <StackPanel x:Name="Storages" Margin="32,24,32,32" MaxWidth="1100"/>
+      </ScrollViewer>
+      <!-- the labels page: the player's own labels and which mods carry them -->
+      <ScrollViewer x:Name="TagsPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Focusable="False">
+        <StackPanel x:Name="TagsBox" Margin="32,24,32,32" MaxWidth="1100"/>
+      </ScrollViewer>
+      <!-- the download page: empty and hidden unless the build has one -->
+      <ScrollViewer x:Name="DownloadPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Focusable="False">
+        <StackPanel x:Name="Downloads" Margin="32,24,32,32" MaxWidth="1100"/>
+      </ScrollViewer>
+      </Grid>
+    </DockPanel>
+  </Border>
+</Window>

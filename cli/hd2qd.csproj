@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- hd2qd.exe: the command line. Console on the .NET Framework 4.8 every
+       Windows 10 (1903+) and 11 has; the same core as the window. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>hd2qd</AssemblyName>
+    <RootNamespace>Hd2Mod</RootNamespace>
+    <Version>0.7.0</Version>
+    <Product>hd2-mod-cli</Product>
+    <Company>pat-pat-patrick</Company>
+    <Copyright>MIT License</Copyright>
+    <ApplicationIcon>..\gui\QuickDeploy\app.ico</ApplicationIcon>
+    <!-- no paths of the build machine in the exe -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)\..=src</PathMap>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+
+  <!-- a build with another output path (the no-nexus build) must still ignore the
+       default obj\ and bin\, or their generated files are compiled twice -->
+  <ItemGroup>
+    <Compile Remove="bin\**" />
+    <Compile Remove="obj\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\core\*.cs" Link="core\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
