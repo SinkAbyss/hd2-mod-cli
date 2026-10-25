@@ -447,6 +447,15 @@ namespace QuickDeploy
                 g.Start();
                 return;
             }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "addlib")
+            {
+                // "addlib": HD2QD_ADDLIB (a folder) added as a library folder, as the button does,
+                // and its question left open for a picture
+                var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                g.Tick += (s, e) => { g.Stop(); ShowPage("storage"); AddLibraryFolder(Environment.GetEnvironmentVariable("HD2QD_ADDLIB")); };
+                g.Start();
+                return;
+            }
             if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "listtop")
             {
                 // "listtop": the list scrolled back to its top after the start, for the README's
@@ -1142,13 +1151,19 @@ namespace QuickDeploy
             foreach (var root in Roots().Take(4)) card.Children.Add(Code(root));
             card.Children.Add(Small(Texts.Get("target_game"), new Thickness(0, 8, 0, 0)));
             if (st.GameDir != null) card.Children.Add(Code(st.GameDir));
-            var pickGame = new Button
+            // only shown here: a "Change…" in this card read as changing the mod library too (the
+            // user, 2026-10-25); the game folder is changed on the Storage page. With none set yet
+            // the card offers to choose one.
+            if (st.GameDir == null)
             {
-                Content = Texts.Get(st.GameDir == null ? "game_pick" : "game_change"), Style = (Style)FindResource("Ghost"),
-                MinHeight = 32, Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = st.GameDir == null ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
-            };
-            pickGame.Click += (s, e) => ChooseGame();
-            card.Children.Add(pickGame);
+                var pickGame = new Button
+                {
+                    Content = Texts.Get("game_pick"), Style = (Style)FindResource("Ghost"),
+                    MinHeight = 32, Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch,
+                };
+                pickGame.Click += (s, e) => ChooseGame();
+                card.Children.Add(pickGame);
+            }
             if (Texts.Hints) card.Children.Add(Small(Texts.Get("target_note"), new Thickness(0, 8, 0, 0)));
             // copies in the game folder (another manager's) that can be hard links
             var copies = st.Mods.Where(m => m.Enabled && m.SameDrive).SelectMany(m => m.Files).Where(f => f.Action == "keep" && !f.Linked).ToList();
@@ -1298,15 +1313,7 @@ namespace QuickDeploy
             var head = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
             var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             var addFolder = new Button { Content = Texts.Get("st_add_folder"), Style = (Style)FindResource("Ghost"), MinHeight = 40 };
-            addFolder.Click += (s, e) =>
-            {
-                var p = PickFolder("pick_lib_title");
-                if (p == null) return;
-                var r = Cli.Call(() => Storage.AddFolder(p));
-                if (!r.Ok) Dialog.Tell(this, Texts.F("failed", r.Message));
-                storageSel = r.Out;
-                RenderStorage();
-            };
+            addFolder.Click += (s, e) => { var p = PickFolder("pick_lib_title"); if (p != null) AddLibraryFolder(p); };
             tools.Children.Add(addFolder);
             var import = new Button { Content = Texts.Get("st_import"), Style = (Style)FindResource("Ghost"), MinHeight = 40, Margin = new Thickness(8, 0, 0, 0) };
             import.Click += (s, e) => ImportFromManagers(false);
@@ -1316,6 +1323,9 @@ namespace QuickDeploy
             head.Children.Add(new TextBlock { Text = Texts.Get("st_title"), FontSize = 28, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
             Storages.Children.Add(head);
             Storages.Children.Add(Texts.Hints ? Small(Texts.Get("st_intro"), new Thickness(0, 0, 0, 20)) : new Border { Height = 12 });
+
+            Storages.Children.Add(GameCard());
+            Storages.Children.Add(new Border { Height = 20 });
 
             // what the hard links have saved over every deploy: a number that only grows, so it
             // lives here and not in the caption (the user, 2026-10-24)
@@ -1520,6 +1530,86 @@ namespace QuickDeploy
 
         /// <summary>One folder as Steam shows a library folder: path, badges, the drive's use, its
         /// mods and size, and what can be done with it.</summary>
+        /// <summary>A library folder added, then what it holds offered, as Steam finds the games
+        /// in a library folder it is given (the user, 2026-10-25).</summary>
+        void AddLibraryFolder(string p)
+        {
+            var r = Cli.Call(() => Storage.AddFolder(p));
+            if (!r.Ok) { Dialog.Tell(this, Texts.F("failed", r.Message)); return; }
+            storageSel = r.Out;
+            RenderStorage();
+            var finds = Storage.Look(r.Out, Library.Load());
+            if (finds.Managers.Count > 0 || finds.Loose.Count > 0) ImportFromManagers(false, finds, r.Out);
+        }
+
+        /// <summary>The game folder on the Storage page: where it is, whether Helldivers 2 is
+        /// really there, and changing it, by hand or found in the Steam libraries (the user,
+        /// 2026-10-25: changed here, not in the deploy target card).</summary>
+        Border GameCard()
+        {
+            var g = GameDir();
+            var box = new StackPanel();
+            var top = new DockPanel();
+            var acts = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Top };
+            var change = new Button { Content = Texts.Get("st_game_change"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 0, 0, 0) };
+            change.Click += (s, e) => { var p = PickGame(); if (p != null) SwitchGame(p); };
+            acts.Children.Add(change);
+            var find = new Button { Content = Texts.Get("st_game_find"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 0, 0, 0) };
+            find.Click += (s, e) =>
+            {
+                var found = Ops.FindGame();
+                if (found == null) { Dialog.Tell(this, Texts.Get("st_game_none_found")); return; }
+                if (g != null && string.Equals(Paths.Abs(found).TrimEnd('\\'), Paths.Abs(g).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                { Dialog.Tell(this, Texts.F("st_game_same", found)); return; }
+                SwitchGame(found);
+            };
+            acts.Children.Add(find);
+            if (g != null && Directory.Exists(g))
+            {
+                var open = new Button { Content = Texts.Get("open"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 0, 0, 0) };
+                open.Click += (s, e) => OpenFolder(g);
+                acts.Children.Add(open);
+            }
+            DockPanel.SetDock(acts, Dock.Right);
+            top.Children.Add(acts);
+            top.Children.Add(Heading(Texts.Get("st_game")));
+            box.Children.Add(top);
+            bool ok = g != null && Ops.GameFolderOf(g) != null;
+            var line = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+            line.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = B(ok ? "Blue" : "Yellow"), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+            line.Children.Add(new TextBlock { Text = Texts.Get(g == null ? "st_game_none" : ok ? "st_game_ok" : "st_game_gone"), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            box.Children.Add(line);
+            if (g != null) box.Children.Add(new TextBlock { Text = g, FontFamily = Mono, FontSize = 15, Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap });
+            return new Border { BorderBrush = B(ok ? "Grid" : "Yellow"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(16), Child = box };
+        }
+
+        /// <summary>Deploying to another game folder from now on, after saying what stays in the old one.</summary>
+        void SwitchGame(string to)
+        {
+            var g = GameDir();
+            if (g != null && Directory.Exists(g) &&
+                Dialog.Choose(this, Texts.F("st_game_switch", to, g), Texts.Get("st_game_switch_go"), Texts.Get("cancel")) != 0) return;
+            _ = Act(() => Cli.Run("init", "--game", to), false).ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() => { if (StoragePage.Visibility == Visibility.Visible) RenderStorage(); })));
+        }
+
+        /// <summary>A library folder that is somewhere else now: its mods follow it.</summary>
+        async void ChangeFolderPath(LibraryFolder f)
+        {
+            var to = Pick.Folder(this, Texts.Get("st_path_title"), Directory.Exists(f.Path) ? f.Path : IOPath.GetDirectoryName(f.Path));
+            if (to == null || string.Equals(Paths.Abs(to).TrimEnd('\\'), Paths.Abs(f.Path).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return;
+            var r = await Exec(() => Cli.Call(() =>
+            {
+                var lib = Library.Load();
+                var (followed, missing) = Storage.ChangeFolder(lib, f.Path, to);
+                lib.Save();
+                return Texts.F("st_path_done", followed, Paths.Abs(to)) + (missing > 0 ? "\n\n" + Texts.F("st_path_missing", missing) : "");
+            }));
+            if (r.Ok) { storageSel = Paths.Abs(to).TrimEnd('\\'); Dialog.Tell(this, r.Out); }
+            else Dialog.Tell(this, Texts.F("failed", r.Message));
+            Refresh();
+            RenderStorage();
+        }
+
         Border FolderCard(LibraryFolder f)
         {
             bool cur = string.Equals(f.Path, storageSel, StringComparison.OrdinalIgnoreCase);
@@ -1537,6 +1627,12 @@ namespace QuickDeploy
                 var open = new Button { Content = Texts.Get("open"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 0, 0, 0) };
                 open.Click += (s, e) => OpenFolder(f.Path);
                 acts.Children.Add(open);
+            }
+            if (f.Registered || f.IsDefault)
+            {
+                var path = new Button { Content = Texts.Get("st_change_path"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 0, 0, 0) };
+                path.Click += (s, e) => ChangeFolderPath(f);
+                acts.Children.Add(path);
             }
             if (f.Registered && !f.IsDefault)
             {
@@ -1650,12 +1746,15 @@ namespace QuickDeploy
 
         /// <summary>Other managers' lists into the library (ticked ones; all of them on a first start),
         /// then advice for the mods that landed on another drive than the game.</summary>
-        async void ImportFromManagers(bool firstStart)
+        async void ImportFromManagers(bool firstStart, FolderFinds finds = null, string folder = null)
         {
-            var found = Importers.Found();
-            if (found.Count == 0) { if (!firstStart) Dialog.Tell(this, Texts.Get("im_none")); return; }
-            var pick = Dialog.Ticks(this, Texts.Get(firstStart ? "im_ask_first" : "im_ask"),
-                                    found.Select(x => Texts.F("im_item", x.Name, x.Mods, x.Where)).ToArray(), Texts.Get("arsenal_import"));
+            // from a library folder just added: the lists kept in it and its other mod folders
+            var found = finds?.Managers ?? Importers.Found();
+            var loose = finds?.Loose ?? new List<string>();
+            if (found.Count == 0 && loose.Count == 0) { if (!firstStart) Dialog.Tell(this, Texts.Get("im_none")); return; }
+            var items = found.Select(x => Texts.F("im_item", x.Name, x.Mods, x.Where)).ToList();
+            if (loose.Count > 0) items.Add(Texts.F("lf_loose", loose.Count));
+            var pick = Dialog.Ticks(this, Texts.Get(folder != null ? "lf_ask" : firstStart ? "im_ask_first" : "im_ask"), items.ToArray(), Texts.Get("arsenal_import"));
             if (pick == null || !pick.Any(x => x)) return;
             var before = new HashSet<string>(Library.Load().Mods.Select(m => m.Id));
             var lines = new List<string>();
@@ -1665,11 +1764,18 @@ namespace QuickDeploy
             for (int i = 0; i < found.Count; i++)
             {
                 if (!pick[i]) continue;
-                var r = await Exec(new[] { "import-" + found[i].Key });
+                var r = await Exec(found[i].Dir != null ? new[] { "import-" + found[i].Key, "--dir", found[i].Dir } : new[] { "import-" + found[i].Key });
                 lines.Add(r.Ok ? Last(r.Out.Split('\n').FirstOrDefault() ?? "") : Texts.F("failed", r.Message));
                 foreach (var m in Library.Load().Mods)
                     if (!before.Contains(m.Id) && !group.ContainsKey(m.Id)) group[m.Id] = i + 1;
                 if (found[i].Key == "arsenal" && r.Ok) arsenalIn = true;
+            }
+            if (loose.Count > 0 && pick[found.Count])
+            {
+                var r = await Exec("add-loose", folder);
+                lines.Add(r.Ok ? Last(r.Out) : Texts.F("failed", r.Message));
+                foreach (var m in Library.Load().Mods)
+                    if (!before.Contains(m.Id) && !group.ContainsKey(m.Id)) group[m.Id] = found.Count + 1;
             }
             Refresh();
             var lib = Library.Load();

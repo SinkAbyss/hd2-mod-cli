@@ -11,6 +11,8 @@ namespace Hd2Mod
         /// <summary>"arsenal", "hd2mm" or "echelon".</summary>
         public string Key, Name, Where;
         public int Mods;
+        /// <summary>HD2ModManager's storage folder when it is not in its usual place, else null.</summary>
+        public string Dir;
     }
 
     /// <summary>Other mod managers' lists, read only, merged into the library: a mod already in
@@ -23,6 +25,31 @@ namespace Hd2Mod
             var b = Environment.GetEnvironmentVariable("LOCALAPPDATA");
             var d = string.IsNullOrEmpty(b) ? null : Path.Combine(b, "Helldivers2ModManager");
             return d != null && Directory.Exists(Path.Combine(d, "Mods")) ? d : null;
+        }
+
+        /// <summary>HD2ModManager's storage folder when the folder given is it, its Mods folder, or
+        /// the program's own folder: settings.json beside Helldivers2ModManager.exe names the
+        /// storage folder, which its settings let a player move (the user, 2026-10-25). Else null.</summary>
+        public static string Hd2mmStorage(string folder)
+        {
+            try
+            {
+                // its own list file says so: a Mods folder of manifests alone is any mod folder
+                bool Is(string d) => d != null && Directory.Exists(Path.Combine(d, "Mods")) && File.Exists(Path.Combine(d, "enabled.json"));
+                var f = Path.GetFullPath(folder).TrimEnd('\\');
+                if (Is(f)) return f;
+                var up = Path.GetDirectoryName(f);
+                if (string.Equals(Path.GetFileName(f), "Mods", StringComparison.OrdinalIgnoreCase) && Is(up)) return up;
+                var settings = Path.Combine(f, "settings.json");
+                if (File.Exists(settings) && File.Exists(Path.Combine(f, "Helldivers2ModManager.exe")))
+                {
+                    var s = Json.Str(Store.ReadJson(settings) as Dictionary<string, object>, "StorageDirectory");
+                    if (!string.IsNullOrEmpty(s) && Is(s)) return Path.GetFullPath(s).TrimEnd('\\');
+                }
+            }
+            catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException ||
+                                      e is ArgumentException || e is NotSupportedException) { }
+            return null;
         }
 
         /// <summary>Echelon's own list, when it is there: %APPDATA%\Echelon\library.json, which it

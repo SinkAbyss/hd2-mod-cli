@@ -1305,6 +1305,98 @@ namespace Hd2Mod.Tests
             Assert.Equal(new[] { "c-s2", "b-y" }, PlanList());
         }
 
+        /// <summary>A library folder is looked into, as Steam looks into a library folder it is
+        /// given (the user, 2026-10-25): another manager's list kept there is offered as an import,
+        /// HD2ModManager's even when its storage was moved (found through the settings.json beside
+        /// its program); other mod folders are offered as they stand; our own older versions are not.</summary>
+        [Fact]
+        public void ALibraryFolderSaysWhatItHolds()
+        {
+            var local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            var roaming = Environment.GetEnvironmentVariable("APPDATA");
+            try
+            {
+                // no manager in its usual place
+                Environment.SetEnvironmentVariable("LOCALAPPDATA", Path.Combine(Root, "empty-local"));
+                Environment.SetEnvironmentVariable("APPDATA", Path.Combine(Root, "empty-roaming"));
+                // HD2ModManager's storage moved by its own setting, named in settings.json beside its program
+                var moved = Path.Combine(Root, "Moved Storage");
+                Directory.Move(FakeHd2mm(), moved);
+                var program = Path.Combine(Root, "HD2ModManager 1.2");
+                Directory.CreateDirectory(program);
+                File.WriteAllText(Path.Combine(program, "Helldivers2ModManager.exe"), "");
+                File.WriteAllText(Path.Combine(program, "settings.json"), "{\"StorageDirectory\": " + Json.Write(moved) + "}");
+                var said = Cli("folder-add", program);
+                Assert.Contains("HD2ModManager's list, 3 mods not in the library: hd2qd import-hd2mm --dir", said);
+                // the storage folder, and its Mods folder, are known as well
+                Assert.Contains("HD2ModManager's list, 3 mods", Cli("folder-add", moved));
+                Assert.Contains("HD2ModManager's list, 3 mods", Cli("folder-add", Path.Combine(moved, "Mods")));
+                // --import brings the list in, with its order and on/off
+                Cli("folder-add", program, "--import");
+                Assert.Equal(new[] { "Mod C", "Mod A", "Mod B" }, Library.Load().Mods.Select(m => m.Name));
+                Assert.Equal(new[] { true, false, true }, Library.Load().Mods.Select(m => m.Enabled));
+                Assert.DoesNotContain("HD2ModManager's list", Cli("folder-add", program));   // nothing left to bring
+
+                // a folder of mods no manager lists: a Mods folder of manifests is not HD2ModManager's
+                var plain = Path.Combine(Root, "Plain", "Mods");
+                foreach (var n in new[] { "One", "Two" })
+                {
+                    Directory.CreateDirectory(Path.Combine(plain, n, "sub"));
+                    File.WriteAllText(Path.Combine(plain, n, "sub", A + ".patch_0"), n);
+                    File.WriteAllText(Path.Combine(plain, n, "manifest.json"), "{\"Name\": \"" + n + "\"}");
+                }
+                Directory.CreateDirectory(Path.Combine(plain, "Not a mod"));
+                Cli("add", Path.Combine(plain, "One"));
+                said = Cli("folder-add", plain);
+                Assert.DoesNotContain("HD2ModManager's list", said);
+                Assert.Contains("1 mod folders no manager lists", said);
+                Assert.Contains("1 mod folders added where they are", Cli("add-loose", plain));
+                var two = Library.Load().Mods.Single(m => m.Name == "Two");
+                Assert.Equal(Path.Combine(plain, "Two"), two.Path);                        // where it is, not copied
+                Assert.DoesNotContain("mod folders", Cli("folder-add", plain));
+
+                // our own older version in the default folder is a leftover, not a mod to add
+                var mods = Path.Combine(Root, "Default Mods");
+                Cli("init", "--mods-dir", mods);
+                Directory.CreateDirectory(Path.Combine(mods, "Old Thing v1_0123456789ab"));
+                File.WriteAllText(Path.Combine(mods, "Old Thing v1_0123456789ab", B + ".patch_0"), "old");
+                Assert.DoesNotContain("mod folders", Cli("folder-add", mods));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("LOCALAPPDATA", local);
+                Environment.SetEnvironmentVariable("APPDATA", roaming);
+            }
+        }
+
+        /// <summary>A library folder moved by hand (or given another drive letter): changing its path
+        /// takes the list, the default and its mods along; a mod not at the new place stays where it
+        /// was and is counted (the user, 2026-10-25).</summary>
+        [Fact]
+        public void ALibraryFolderPathCanChange()
+        {
+            var old = Path.Combine(Root, "Old Place");
+            foreach (var n in new[] { "One", "Two", "Three" })
+            {
+                Directory.CreateDirectory(Path.Combine(old, n));
+                File.WriteAllText(Path.Combine(old, n, A + ".patch_0"), n);
+                Cli("add", Path.Combine(old, n));
+            }
+            Cli("folder-add", old);
+            Cli("init", "--mods-dir", old);
+            var now = Path.Combine(Root, "New Place");
+            Directory.Move(old, now);
+            Directory.Delete(Path.Combine(now, "Three"), true);                 // lost on the way
+            Assert.Contains("2 mods now in " + now + "; 1 not found there", Cli("folder-path", old, now));
+            var mods = Library.Load().Mods.ToDictionary(m => m.Name, m => m.Path);
+            Assert.Equal(Path.Combine(now, "One"), mods["One"]);
+            Assert.Equal(Path.Combine(old, "Three"), mods["Three"]);
+            Assert.Contains(now, Storage.Registered());
+            Assert.DoesNotContain(old, Storage.Registered());
+            Assert.Equal(now, Store.ModsDir());                                  // the default follows
+            Assert.Throws<ModError>(() => Storage.ChangeFolder(Library.Load(), now, Path.Combine(Root, "Nowhere")));
+        }
+
         [Fact]
         public void ImportsMergeWithoutDuplicates()
         {

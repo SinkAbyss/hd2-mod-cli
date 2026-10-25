@@ -23,6 +23,15 @@ namespace Hd2Mod
     /// <summary>The mod library folders (the user, 2026-10-24: "像 Steam 设置里设置游戏库一样"): the
     /// ones added, the default (where new mods go), and every folder the library's mods are in;
     /// moving mods between them, as Steam moves an install folder.</summary>
+    /// <summary>What a library folder holds that the library does not have yet.</summary>
+    public class FolderFinds
+    {
+        /// <summary>Other managers' lists kept here: imported, their order, on/off and options come too.</summary>
+        public List<ImportSource> Managers = new List<ImportSource>();
+        /// <summary>Mod folders here that no manager lists and the library does not have.</summary>
+        public List<string> Loose = new List<string>();
+    }
+
     public static class Storage
     {
         public static List<string> Registered() =>
@@ -44,6 +53,122 @@ namespace Hd2Mod
             list.Add(p);
             SaveRegistered(cfg, list);
             return p;
+        }
+
+        /// <summary>A library folder looked into, the way Steam looks into a library folder it is
+        /// given (the user, 2026-10-25: "添加库文件夹，可以检测各个 mod 管理器的"). The mods other
+        /// managers keep there come in through those managers' own lists, so their order, on/off and
+        /// options come too; any other mod folder in it is offered as it stands. Our own unpacked
+        /// folders no mod uses (older versions) are the Storage page's leftovers, not mods to add.
+        /// Only reads.</summary>
+        public static FolderFinds Look(string folder, Library lib)
+        {
+            var root = Paths.Abs(folder).TrimEnd('\\');
+            string Key(string p) => Paths.Abs(p ?? "").TrimEnd('\\');
+            bool Inside(string p)
+            {
+                var x = Key(p);
+                return string.Equals(x, root, StringComparison.OrdinalIgnoreCase) || x.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
+            }
+            bool Readable(Exception e) => e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException || e is InvalidCastException;
+            var have = new HashSet<string>(lib.Mods.Select(m => Key(m.Path)), StringComparer.OrdinalIgnoreCase);
+            var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);      // every folder a manager lists
+            var finds = new FolderFinds();
+            void Offer(string key, string name, string where, string dir, Library theirs, bool all)
+            {
+                foreach (var m in theirs.Mods) claimed.Add(Key(m.Path));
+                // the mods an import would add: the same rule as the import (folder, Guid or name)
+                var mine = new Library { Mods = new List<Mod>(lib.Mods) };
+                theirs.Mods = theirs.Mods.Where(m => all || Inside(m.Path)).ToList();
+                int n = Importers.Merge(mine, theirs).Added.Count;
+                if (n > 0) finds.Managers.Add(new ImportSource { Key = key, Name = name, Where = where, Dir = dir, Mods = n });
+            }
+            try { if (Store.ArsenalFile() != null) Offer("arsenal", "HD2 Arsenal", root, null, Ops.ImportArsenal().Lib, false); }
+            catch (Exception e) when (Readable(e)) { }
+            // HD2ModManager: the folder given is its storage (or the program's folder, which names
+            // it: then all of its mods, wherever that is), or its usual storage is in the folder
+            var usual = Importers.Hd2mmDir();
+            var named = Importers.Hd2mmStorage(root);
+            foreach (var dir in new[] { named, usual }.Where(d => d != null).Distinct(StringComparer.OrdinalIgnoreCase))
+                try
+                {
+                    bool isUsual = usual != null && string.Equals(Key(dir), Key(usual), StringComparison.OrdinalIgnoreCase);
+                    Offer("hd2mm", "HD2ModManager", Path.Combine(dir, "Mods"), isUsual ? null : dir, Importers.ReadHd2mm(dir), dir == named);
+                }
+                catch (Exception e) when (Readable(e)) { }
+            try { if (Importers.EchelonFile() != null) Offer("echelon", "Echelon", root, null, Importers.ReadEchelon(), false); }
+            catch (Exception e) when (Readable(e)) { }
+            var cfg = Store.Config();
+            List<string> subs;
+            try { subs = Directory.EnumerateDirectories(root).ToList(); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { subs = new List<string>(); }
+            foreach (var sub in subs.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                var k = Key(sub);
+                if (have.Contains(k) || claimed.Contains(k)) continue;
+                if (claimed.Any(c => c.StartsWith(k + "\\", StringComparison.OrdinalIgnoreCase))) continue;   // a manager's own store
+                if (Ops.Ours(k, cfg)) continue;                    // an older version this program unpacked
+                if (HasPatch(k, 3)) finds.Loose.Add(k);
+            }
+            return finds;
+        }
+
+        /// <summary>Whether a folder holds a patch file, at most depth folders down.</summary>
+        static bool HasPatch(string dir, int depth)
+        {
+            try
+            {
+                var info = new DirectoryInfo(dir);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+                if (info.EnumerateFiles().Any(f => Deploy.Patch.IsMatch(f.Name))) return true;
+                return depth > 0 && info.EnumerateDirectories().Any(d => HasPatch(d.FullName, depth - 1));
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return false; }
+        }
+
+        /// <summary>Mod folders added to the library where they are, at its bottom: the ones Look
+        /// found loose. One whose name the library has already gets the folder's name after it.</summary>
+        public static List<Mod> AddLoose(Library lib, IEnumerable<string> folders)
+        {
+            var added = new List<Mod>();
+            var paths = new HashSet<string>(lib.Mods.Select(m => Paths.Abs(m.Path ?? "").TrimEnd('\\')), StringComparer.OrdinalIgnoreCase);
+            foreach (var f in folders)
+            {
+                if (!paths.Add(Paths.Abs(f).TrimEnd('\\'))) continue;
+                var mod = Ops.NewMod(f);
+                if (lib.Mods.Any(m => m.Name == mod.Name)) mod.Name += " (" + Path.GetFileName(f.TrimEnd('\\')) + ")";
+                lib.Mods.Add(mod);
+                added.Add(mod);
+            }
+            return added;
+        }
+
+        /// <summary>A library folder that is somewhere else now (moved by hand, or another drive
+        /// letter): the list, the default and every mod in it follow, each one that is at the new
+        /// place too (the user, 2026-10-25). Nothing on disk is moved. The library is the caller's
+        /// to save.</summary>
+        public static (int Followed, int Missing) ChangeFolder(Library lib, string from, string to)
+        {
+            var a = Paths.Abs(from).TrimEnd('\\');
+            var b = Paths.Abs(to).TrimEnd('\\');
+            if (!Directory.Exists(b)) throw new ModError("no such folder: " + b, "no_folder", b);
+            if (System.IO.Path.GetPathRoot(b).TrimEnd('\\') == b) throw new ModError("a whole drive cannot be a mod folder: " + b, "drive_root", b);
+            int followed = 0, missing = 0;
+            foreach (var m in lib.Mods)
+            {
+                var p = Paths.Abs(m.Path ?? "").TrimEnd('\\');
+                if (!string.Equals(p, a, StringComparison.OrdinalIgnoreCase) && !p.StartsWith(a + "\\", StringComparison.OrdinalIgnoreCase)) continue;
+                var q = b + p.Substring(a.Length);
+                if (Directory.Exists(q)) { m.Path = q; followed++; }
+                else missing++;
+            }
+            var cfg = Store.Config();
+            var list = Json.List(cfg, "library_folders").OfType<string>()
+                           .Select(x => string.Equals(Paths.Abs(x).TrimEnd('\\'), a, StringComparison.OrdinalIgnoreCase) ? b : x).ToList();
+            if (!list.Contains(b, StringComparer.OrdinalIgnoreCase)) list.Add(b);
+            if (string.Equals(Paths.Abs(Json.Str(cfg, "mods_dir") ?? "").TrimEnd('\\'), a, StringComparison.OrdinalIgnoreCase)) cfg["mods_dir"] = b;
+            SaveRegistered(cfg, list);
+            return (followed, missing);
         }
 
         /// <summary>The folder off the list (its files stay). The default stays: choose another first.</summary>

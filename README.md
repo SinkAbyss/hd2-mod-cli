@@ -130,9 +130,19 @@ The **Storage** page lists the folders that hold mods, as Steam lists its
 library folders: each with its drive, free space, how many mods it holds and
 their size, and whether it is on the game's drive.
 
-- **Default**: added zips go there. *Make default* chooses
-  another; *Add folder…* adds one; *Remove from list* takes a folder you added
-  off the list (its files stay).
+- **Game folder** (at the top): where the game is and whether Helldivers 2 is
+  really there. *Change…* chooses it by hand; *Find automatically* looks in the
+  Steam libraries on this computer.
+- **Default**: added zips go there. *Make default* chooses another; *Remove
+  from list* takes a folder you added off the list (its files stay).
+- **Add library folder…** adds a folder and, as Steam does with a library
+  folder, looks inside: another manager's mods kept there (HD2 Arsenal's,
+  HD2ModManager's even when its storage was moved, Echelon's) are offered with
+  that manager's list, so their order, on/off and options come too; any other
+  mod folder in it is offered as it stands. Mods already in the library are
+  never added twice.
+- **Change path…**: a folder you moved yourself, or one on a drive that got
+  another letter. The mods in it follow it; nothing on disk is moved.
 - Folders that mods are in are listed by themselves (HD2 Arsenal's, HD2ModManager's, Echelon's).
 - **Moving mods**: choose a folder, tick its mods, *Move to…* another folder.
   *Move* deletes the old folders; *Copy* keeps them, for a manager that still
@@ -216,7 +226,8 @@ A change made on the command line shows in an open window half a second later.
 | `import-hd2mm [--dir DIR] [--replace]` | Add HD2ModManager's mods, order, on/off and options to the library (read only; its folder-name and object options both). |
 | `import-echelon [--file FILE] [--replace]` | Add Echelon's mods, on/off and options from its own library.json, in its active profile's order (read only). |
 | `folders` | The mod folders: the default, the ones added, and the folders mods are in, with their drives. |
-| `folder-add PATH` / `folder-remove PATH` / `folder-default PATH` | Add a mod folder, take one off the list (its files stay), choose the default. |
+| `folder-add PATH [--import]` / `folder-remove PATH` / `folder-default PATH` | Add a library folder and say which other managers' lists and which other mods it holds (`--import` brings them in), take one off the list (its files stay), choose the default. |
+| `folder-path PATH NEW` / `add-loose PATH` | A library folder is somewhere else now: it and its mods follow. Add the mod folders in a library folder that no manager lists, where they are. |
 | `relocate MOD... --into FOLDER [--keep]` | Move mods into another mod folder (`--keep`: copy, the old folders stay); the game's copies of them become hard links. |
 | `delete MOD --yes` | Delete a mod from the disk for good: out of the library and the game (a deploy), its folder deleted. |
 | `enable MOD...` / `disable MOD...` | Turn mods on or off. |
@@ -384,7 +395,10 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 **存储** 页按照 Steam 游戏库文件夹的方式列出存放 mod 的文件夹，每个文件夹显示所在分区、可用空间、其中的 mod 数量与大小，以及是否与游戏位于同一分区。
 
-- **默认文件夹**：添加的 zip 放入此处。“设为默认”可更换默认文件夹；“添加文件夹…”可添加文件夹；“从列表移除”仅将添加的文件夹移出列表，其中的文件保留。
+- **游戏目录**（最上方）：显示游戏位置，以及该位置是否确为 Helldivers 2。“更改…”可手动选择；“自动识别”会在本机的 Steam 库中查找。
+- **默认文件夹**：添加的 zip 放入此处。“设为默认”可更换默认文件夹；“从列表移除”仅将添加的文件夹移出列表，其中的文件保留。
+- **添加库文件夹…**：添加文件夹后，像 Steam 识别游戏库文件夹一样检查其中内容。其他管理器存放在此的 mod（HD2 Arsenal、HD2ModManager——即使其存储目录已更改——以及 Echelon）会按该管理器的列表导入，加载顺序、开关与可选内容一并保留；其他 mod 文件夹则原地加入。库中已有的 mod 不会重复加入。
+- **更改路径…**：文件夹被手动移动，或所在分区的盘符改变时使用。其中的 mod 会随之指向新位置，磁盘上的文件不做移动。
 - 含有 mod 的文件夹会自动列出（如 HD2 Arsenal、HD2ModManager、Echelon 的文件夹）。
 - **移动 mod**：选择文件夹，勾选其中的 mod，点击“移动到…”并选择目标文件夹。“移动”将删除原文件夹；“复制”保留原文件夹，供仍在使用的其他管理器使用。完成后程序会说明移动的数量与位置，并将游戏目录中对应的复制件改为硬链接。
 

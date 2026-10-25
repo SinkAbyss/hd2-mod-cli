@@ -47,7 +47,12 @@ namespace Hd2Mod
             Cmd("import-echelon", new Spec { Help = "add Echelon's mods, order, on/off and options to the library (read only; mods already in it stay)",
                                              Values = new[] { "--file" }, Flags = new[] { "--replace" }, Run = ImportEchelon }),
             Cmd("folders", new Spec { Help = "the mod folders: the default (where new mods go), the ones added, and those mods are in", Run = FoldersCmd }),
-            Cmd("folder-add", new Spec { Help = "add a mod folder to the list", Positionals = new[] { "path" }, Run = (a, o) => o.WriteLine("added: " + Storage.AddFolder(a.Pos["path"])) }),
+            Cmd("folder-add", new Spec { Help = "add a library folder, and say which other managers' lists and which mods not in the library it holds (--import: bring them in)",
+                                         Positionals = new[] { "path" }, Flags = new[] { "--import" }, Run = FolderAdd }),
+            Cmd("folder-path", new Spec { Help = "a library folder is somewhere else now: the list, the default and the mods in it follow (nothing on disk moves)",
+                                          Positionals = new[] { "path", "to" }, Run = FolderPath }),
+            Cmd("add-loose", new Spec { Help = "add the mod folders in a library folder that no other manager lists and the library does not have, where they are",
+                                        Positionals = new[] { "path" }, Run = AddLoose }),
             Cmd("folder-remove", new Spec { Help = "take a mod folder off the list (its files stay)", Positionals = new[] { "path" },
                                             Run = (a, o) => { Storage.RemoveFolder(a.Pos["path"]); o.WriteLine("off the list: " + a.Pos["path"]); } }),
             Cmd("folder-default", new Spec { Help = "make a mod folder the default: added zips and downloads go there", Positionals = new[] { "path" },
@@ -284,6 +289,49 @@ namespace Hd2Mod
                 cfg["game_dir"] = g;
                 Store.Save("config.json", cfg);
             }
+        }
+
+        /// <summary>A library folder added, and what it holds told (the user, 2026-10-25: as Steam
+        /// finds the games in a library folder it is given).</summary>
+        static void FolderAdd(Args a, TextWriter o)
+        {
+            var p = Storage.AddFolder(a.Pos["path"]);
+            o.WriteLine("added: " + p);
+            var finds = Storage.Look(p, Library.Load());
+            foreach (var m in finds.Managers)
+            {
+                if (!a.Flag("--import"))
+                {
+                    o.WriteLine("in it: " + m.Name + "'s list, " + m.Mods + " mods not in the library: hd2qd import-" + m.Key +
+                                (m.Dir != null ? " --dir " + Ops.Repr(m.Dir) : ""));
+                    continue;
+                }
+                var args = new Args();
+                if (m.Dir != null) args.Values["--dir"] = m.Dir;
+                if (m.Key == "arsenal") ImportArsenal(args, o);
+                else if (m.Key == "hd2mm") ImportHd2mm(args, o);
+                else if (m.Key == "echelon") ImportEchelon(args, o);
+            }
+            if (finds.Loose.Count == 0) return;
+            if (!a.Flag("--import")) { o.WriteLine("in it: " + finds.Loose.Count + " mod folders no manager lists: hd2qd add-loose " + Ops.Repr(p)); return; }
+            AddLoose(new Args { Pos = { ["path"] = p } }, o);
+        }
+
+        static void FolderPath(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var (followed, missing) = Storage.ChangeFolder(lib, a.Pos["path"], a.Pos["to"]);
+            lib.Save();
+            o.WriteLine(followed + " mods now in " + Paths.Abs(a.Pos["to"]) + (missing > 0 ? "; " + missing + " not found there, left where they were" : ""));
+        }
+
+        static void AddLoose(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var added = Storage.AddLoose(lib, Storage.Look(a.Pos["path"], lib).Loose);
+            lib.Save();
+            foreach (var m in added) o.WriteLine("added " + m.Name + "  (" + m.Path + ")");
+            o.WriteLine(added.Count + " mod folders added where they are");
         }
 
         static void ImportHd2mm(Args a, TextWriter o) => Import(Importers.ReadHd2mm(a.Value("--dir")), a.Flag("--replace"), "HD2ModManager", o);
