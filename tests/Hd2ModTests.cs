@@ -72,6 +72,39 @@ namespace Hd2Mod.Tests
             return b.ToArray();
         }
 
+        /// <summary>A patch archive of Lua scripts as the game has them: the type table names Lua,
+        /// and each resource is its text's length, the kind (2: source), then the text.</summary>
+        protected static byte[] LuaArchive(params (ulong Id, string Text)[] scripts)
+        {
+            var b = new List<byte>();
+            var head = new byte[0x48];
+            BitConverter.GetBytes(0xF0000011u).CopyTo(head, 0);
+            BitConverter.GetBytes(1u).CopyTo(head, 4);
+            BitConverter.GetBytes((uint)scripts.Length).CopyTo(head, 8);
+            b.AddRange(head);
+            var type = new byte[32];
+            BitConverter.GetBytes(Deploy.LuaType).CopyTo(type, 8);
+            b.AddRange(type);
+            var bodies = scripts.Select(s =>
+            {
+                var text = Bytes(s.Text);
+                return BitConverter.GetBytes((uint)text.Length).Concat(BitConverter.GetBytes(2u)).Concat(text).ToArray();
+            }).ToList();
+            ulong at = (ulong)(0x48 + 32 + 80 * scripts.Length);
+            for (int i = 0; i < scripts.Length; i++)
+            {
+                var row = new byte[80];
+                BitConverter.GetBytes(scripts[i].Id).CopyTo(row, 0);
+                BitConverter.GetBytes(Deploy.LuaType).CopyTo(row, 8);
+                BitConverter.GetBytes(at).CopyTo(row, 0x10);
+                BitConverter.GetBytes((uint)bodies[i].Length).CopyTo(row, 0x38);
+                b.AddRange(row);
+                at += (ulong)bodies[i].Length;
+            }
+            foreach (var body in bodies) b.AddRange(body);
+            return b.ToArray();
+        }
+
         /// <summary>A mod folder: files {relative path: bytes}, plus empty companions for each main file.</summary>
         protected string Mod(string name, Dictionary<string, byte[]> files, string manifest = null)
         {

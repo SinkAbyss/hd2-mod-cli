@@ -124,6 +124,66 @@ namespace Hd2Mod
         /// <summary>Whether any patch archive under a mod's folder (any option) holds a Lua script,
         /// and whether any of them replaces a script a loader replaces. Only an archive that holds
         /// Lua at all is read row by row.</summary>
+        static long Unix(DateTime t) => new DateTimeOffset(t).ToUnixTimeSeconds();
+
+        /// <summary>The mods' Lua before a deploy (LuaMods): each mod's facts go into its own
+        /// entry as "lua_info"; the load order's into the block returned.</summary>
+        static Dictionary<string, object> LuaBlock(Library lib, List<object> mods)
+        {
+            List<ModLua> all;
+            try { all = LuaMods.Of(lib); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return null; }
+            var (owner, boots, running, issues) = LuaMods.Check(lib, all);
+            var session = LuaMods.LastSession();
+            var byId = all.ToDictionary(x => x.Mod.Id);
+            foreach (var entry in mods.OfType<Dictionary<string, object>>())
+            {
+                if (!byId.TryGetValue((string)entry["id"], out var ml)) continue;
+                var addons = ml.Addons.ToList();
+                var last = session?.Mods.LastOrDefault(x => addons.Contains(x.Name));
+                entry["lua_info"] = new Dictionary<string, object>
+                {
+                    ["needs"] = ml.Needs, ["loader"] = ml.Loader, ["loader_version"] = ml.LoaderVersion, ["boot"] = ml.Boot?.BootKind,
+                    ["scripts"] = addons.Cast<object>().ToList(),
+                    ["broken"] = ml.Broken.Select(b => (object)new Dictionary<string, object>
+                    {
+                        ["script"] = b.Name ?? (b.Id == LuaMods.BootId ? "boot" : b.Id.ToString("x16")),
+                        ["line"] = (long)(b.Error?.Line ?? 0), ["message"] = b.Error?.Message,
+                        ["jit"] = b.Jit.Cast<object>().ToList(), ["luajit_bytecode"] = b.LuaJitBytecode,
+                    }).ToList(),
+                    ["pack_of"] = ml.PackOf?.Id, ["pack_of_name"] = ml.PackOfName,
+                    ["last"] = last == null ? null : new Dictionary<string, object> { ["state"] = last.State, ["ms"] = (long)last.Ms, ["why"] = last.Why },
+                };
+            }
+            Dictionary<string, object> crash = null;
+            var newest = LuaMods.Crashes(1).FirstOrDefault();
+            if (newest.File != null)
+            {
+                var then = LuaMods.DeployedAt(newest.When);
+                crash = new Dictionary<string, object>
+                {
+                    ["file"] = newest.File, ["when"] = Unix(newest.When),
+                    ["deployed_when"] = then == null ? (object)null : Unix(then.Value.When),
+                    ["mods"] = (then?.Mods ?? new List<string>()).Cast<object>().ToList(),
+                };
+            }
+            return new Dictionary<string, object>
+            {
+                ["boot_owner"] = owner?.Mod.Id, ["boot_kind"] = owner?.Boot.BootKind, ["running"] = running,
+                ["boot_mods"] = boots.Select(b => (object)b.Mod.Id).ToList(),
+                ["issues"] = issues.Select(i => (object)new Dictionary<string, object>
+                {
+                    ["kind"] = i.Kind, ["mods"] = i.Mods.Select(m => (object)m.Id).ToList(), ["detail"] = i.Detail,
+                }).ToList(),
+                ["session"] = session == null ? null : new Dictionary<string, object>
+                {
+                    ["loader"] = session.Loader, ["when"] = session.When == default(DateTime) ? 0L : Unix(session.When),
+                    ["started"] = (long)session.StartedCount, ["total"] = (long)session.Total,
+                },
+                ["crash"] = crash,
+            };
+        }
+
         static (bool Lua, bool Loader) HasLua(DirectoryInfo folder)
         {
             var patches = folder.EnumerateFiles("*", SearchOption.AllDirectories).Where(f => Deploy.Patch.IsMatch(f.Name)).ToList();
@@ -313,12 +373,14 @@ namespace Hd2Mod
             }
             var deletes = d != null ? d.Deletes.Concat(d.Replaced).ToList() : new List<string>();
             deletes.Sort(string.CompareOrdinal);
+            var luaCheck = LuaBlock(lib, mods);
             return new Dictionary<string, object>
             {
                 ["tool"] = "hd2-mod-cli", ["version"] = Version, ["game_dir"] = game, ["home"] = Store.Home, ["mods_dir"] = Store.ModsDir(),
                 ["summary"] = summary, ["links"] = links, ["saved_bytes"] = Json.Long(record, "saved_bytes"),
                 ["deploys"] = Json.Long(record, "deploys"), ["deletes"] = deletes.Cast<object>().ToList(),
                 ["mods"] = mods, ["conflicts"] = clashes, ["resource_names"] = ResourceNames.HaveNames, ["tags"] = lib.Tags.Cast<object>().ToList(),
+                ["lua_check"] = luaCheck,
                 // profiles: whether they are on, the one in use, all of them (Profiles)
                 ["profiles_on"] = lib.ProfilesOn, ["profile"] = lib.ProfilesOn ? lib.Active : null,
                 ["profiles"] = lib.Profiles.Select(p => (object)p.Name).ToList(),

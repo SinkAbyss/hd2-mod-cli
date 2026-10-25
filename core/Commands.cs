@@ -112,6 +112,10 @@ namespace Hd2Mod
             Cmd("leftovers", new Spec { Help = "the folders of old versions this program unpacked that no mod uses any more " +
                                                "(--delete with folders, or --delete --all, deletes them; the game is untouched)",
                                         Many = true, Flags = new[] { "--delete", "--all" }, Run = LeftoverCmd }),
+            Cmd("lua", new Spec { Help = "the mods' Lua before a deploy: whose start-up script (boot) runs, which loader that is, what each mod needs, what the game's Lua cannot run, the last session and the last crash (read only)",
+                                  Run = LuaCmd }),
+            Cmd("lua-syntax", new Spec { Help = "whether Lua files compile on the game's Lua (PUC 5.1, no LuaJIT): OK, or the line and why",
+                                         Positionals = new[] { "files" }, Many = true, Run = LuaSyntaxCmd }),
             Cmd("self-update", new Spec { Help = "whether a newer version of this program is on GitHub (read only; the official build counts releases, the development build pre-releases too)",
                                           Run = SelfUpdateCmd }),
             Cmd("check", new Spec { Help = "whether the game folder is exactly what the library asks for: what is missing, " +
@@ -706,6 +710,85 @@ namespace Hd2Mod
         }
 
 
+
+        static string LoaderName(string kind, ModLua ml) =>
+            kind == "bml" ? "Boot Mod Loader" + (ml?.Boot?.BootVersion != null ? " " + ml.Boot.BootVersion : "")
+            : kind == "chef" ? "Chef Shared Loader" : kind == "chef_stub" ? "Chef Shared Loader's start-up stub"
+            : kind == "bsl" ? "Bingus Shared Loader" : kind == "other" ? (ml != null ? ml.Mod.Name + "'s own start-up script" : "another start-up script")
+            : "none (the game's own)";
+
+        static void LuaCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var all = LuaMods.Of(lib);
+            var (owner, boots, running, issues) = LuaMods.Check(lib, all);
+            o.WriteLine("start-up script (boot): " + (owner == null ? "the game's own" : owner.Mod.Name + " (" + LoaderName(owner.Boot.BootKind, owner) + ")"));
+            foreach (var b in boots.Where(b => b != owner)) o.WriteLine("  not run: " + b.Mod.Name + " (" + LoaderName(b.Boot.BootKind, b) + ")");
+            o.WriteLine("loader running: " + (running == null ? "none" : LoaderName(running, owner)));
+            if (issues.Count > 0)
+            {
+                o.WriteLine("problems:");
+                foreach (var i in issues)
+                {
+                    var names = string.Join(", ", i.Mods.Select(m => m.Name));
+                    switch (i.Kind)
+                    {
+                        case "boot_conflict": o.WriteLine("  " + i.Mods.Count + " mods carry a start-up script; only " + i.Mods[0].Name + "'s runs: " + names); break;
+                        case "two_loaders": o.WriteLine("  two loaders are on; only the one whose start-up script runs works: " + names); break;
+                        case "no_loader": o.WriteLine("  no loader runs, so these mods do not start: " + string.Join(", ", i.Mods.Skip(i.Detail == "other" ? 1 : 0).Select(m => m.Name))); break;
+                        case "needs_chef": o.WriteLine("  these run only on Chef Shared Loader, which is not the loader running: " + names); break;
+                        case "same_name": o.WriteLine("  " + i.Detail + " is in " + names + "; only " + i.Mods[0].Name + "'s runs"); break;
+                        case "cannot_run": o.WriteLine("  the game's Lua (5.1, no LuaJIT) cannot run " + names); break;
+                        case "pack_alone": o.WriteLine("  " + i.Mods[0].Name + " translates " + i.Detail + (i.Mods.Count > 1 ? ", which is off" : ", which is not installed")); break;
+                    }
+                }
+            }
+            o.WriteLine("Lua mods:");
+            foreach (var ml in all)
+            {
+                var what = new List<string>();
+                if (ml.Loader != null) what.Add("loader: " + LoaderName(ml.Loader == "chef" ? "chef" : ml.Loader, ml));
+                if (ml.Needs == "any") what.Add("needs a loader");
+                if (ml.Needs == "chef") what.Add("needs Chef Shared Loader");
+                if (ml.PackOfName != null) what.Add("translation pack of " + (ml.PackOf?.Name ?? ml.PackOfName));
+                foreach (var s in ml.Broken)
+                {
+                    var name = s.Name ?? (s.Id == LuaMods.BootId ? "boot" : s.Id.ToString("x16"));
+                    if (s.Error != null) what.Add("cannot run: " + name + " line " + s.Error.Value.Line + ": " + s.Error.Value.Message);
+                    else if (s.LuaJitBytecode) what.Add("cannot run: " + name + " is LuaJIT bytecode");
+                    else what.Add("cannot run: " + name + " uses " + string.Join(", ", s.Jit) + " (LuaJIT only)");
+                }
+                if (what.Count == 0) continue;
+                o.WriteLine("  " + (ml.Mod.Enabled ? "[x] " : "[ ] ") + ml.Mod.Name + ": " + string.Join("; ", what));
+            }
+            var last = LuaMods.LastSession();
+            if (last != null)
+            {
+                o.WriteLine("last session (" + last.Loader + ", " + last.When.ToString("yyyy-MM-dd HH:mm") + "): " +
+                            (last.StartedCount >= 0 ? "started " + last.StartedCount + " of " + last.Total : "did not finish starting"));
+                foreach (var s in last.Mods.Where(s => s.State != "loaded"))
+                    o.WriteLine("  " + s.Name + ": " + (s.State == "failed" ? "FAILED: " : "does not compile: ") + s.Why.Split('\n')[0]);
+            }
+            var crash = LuaMods.Crashes(1).FirstOrDefault();
+            if (crash.File != null)
+            {
+                var then = LuaMods.DeployedAt(crash.When);
+                o.WriteLine("last crash: " + crash.When.ToString("yyyy-MM-dd HH:mm:ss") + " (" + crash.File + ")" +
+                            (then == null ? "; no deploy of this program recorded before it" : "; deployed then (" + then.Value.When.ToString("yyyy-MM-dd HH:mm") + "): " + string.Join(", ", then.Value.Mods)));
+            }
+        }
+
+        static void LuaSyntaxCmd(Args a, TextWriter o)
+        {
+            foreach (var f in a.Rest)
+            {
+                byte[] bytes;                           // as the game gets them: a BOM stays
+                try { bytes = File.ReadAllBytes(f); }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { o.WriteLine("UNREADABLE\t" + f + "\t" + e.Message); continue; }
+                var r = LuaSyntax.Check(bytes);
+                o.WriteLine(r == null ? "OK\t" + f : "ERROR\t" + f + "\t" + r.Value.Line + "\t" + r.Value.Message.Replace("\r", " ").Replace("\n", " ").Replace("\t", " "));
+            }
+        }
 
         static void SelfUpdateCmd(Args a, TextWriter o)
         {

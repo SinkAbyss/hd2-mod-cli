@@ -1132,7 +1132,246 @@ namespace QuickDeploy
 
         /// <summary>The mods the list shows, top row first: the load order, or the other way round
         /// when the mod that wins is shown at the top (Texts.TopWins).</summary>
-        IEnumerable<ModRow> Seen() => Texts.TopWins ? st.Mods.Where(Shown).Reverse() : st.Mods.Where(Shown);
+        IEnumerable<ModRow> Seen()
+        {
+            var shown = st.Mods.Where(Shown).ToList();
+            // a translation pack is a line under the mod it translates, not a row of its own,
+            // while that mod is in the list (the user, 2026-10-26)
+            var ids = new HashSet<string>(shown.Select(x => x.Id));
+            shown = shown.Where(x => x.Lu?.PackOf == null || !ids.Contains(x.Lu.PackOf)).ToList();
+            if (Texts.TopWins) shown.Reverse();
+            return shown;
+        }
+
+        /// <summary>The translation packs of a mod, in load order.</summary>
+        List<ModRow> PacksOf(ModRow m) => st.Mods.Where(x => x.Lu?.PackOf == m.Id && InScope(x)).ToList();
+
+        // ---------------------------------------------------------------- the mods' Lua (LuaMods)
+
+        /// <summary>A loader's name as players know it, with its version.</summary>
+        static string LoaderLabel(string kind, string version)
+        {
+            switch (kind)
+            {
+                case "bml": return "Boot Mod Loader" + (version != null ? " " + version : "");
+                case "chef": case "chef_stub": return "Chef Shared Loader" + (version != null ? " " + version : "");
+                case "bsl": return "Bingus Shared Loader" + (version != null ? " " + version : "");
+                default: return null;
+            }
+        }
+
+        ModRow ById(string id) => id == null ? null : st.Mods.FirstOrDefault(x => x.Id == id);
+
+        /// <summary>The loader running now, by name; null when none.</summary>
+        string RunningLabel()
+        {
+            var lua = st?.Lua;
+            if (lua == null || lua.Running == null || lua.Running == "other") return null;
+            var owner = ById(lua.BootOwner);
+            var version = st.Mods.FirstOrDefault(x => x.Lu?.Loader == lua.Running && x.Enabled)?.Lu.LoaderVersion ?? owner?.Lu?.LoaderVersion;
+            return LoaderLabel(lua.Running, version);
+        }
+
+        /// <summary>The issues a mod is in, from the load order's check.</summary>
+        IEnumerable<(string Kind, List<string> Mods, string Detail)> IssuesOf(ModRow m) =>
+            st?.Lua == null ? Enumerable.Empty<(string, List<string>, string)>() : st.Lua.Issues.Where(i => i.Mods.Contains(m.Id));
+
+        /// <summary>Why an enabled mod's scripts will not run, as the row's tag; null when they run.</summary>
+        (string Text, string Colour)? NoRun(ModRow m)
+        {
+            if (m.Lu == null || !m.Enabled) return null;
+            if (m.Lu.Broken.Count > 0) return (Texts.Get("lua_tag_broken"), "Red");
+            foreach (var i in IssuesOf(m))
+            {
+                bool first = i.Mods.Count > 0 && i.Mods[0] == m.Id;
+                if (i.Kind == "no_loader" && m.Lu.Needs != null) return (Texts.Get("lua_tag_nostart"), "Yellow");
+                if (i.Kind == "needs_chef") return (Texts.Get("lua_tag_nostart"), "Yellow");
+                if (i.Kind == "same_name" && !first) return (Texts.Get("lua_tag_nostart"), "Yellow");
+                if (i.Kind == "boot_conflict" && !first) return (Texts.Get("lua_tag_boot_off"), "Yellow");
+                if (i.Kind == "pack_alone" && first) return (Texts.Get("lua_tag_pack_off"), "Yellow");
+            }
+            if (m.Lu.LastState == "failed" || m.Lu.LastState == "no_compile") return (Texts.Get("lua_tag_failed"), "Red");
+            return null;
+        }
+
+        static string When(long unix) => unix <= 0 ? "" : DateTimeOffset.FromUnixTimeSeconds(unix).LocalDateTime.ToString("MM-dd HH:mm");
+
+        /// <summary>The details' card about a mod's Lua: what starts it, whether it will run,
+        /// and why not; null for a mod without scripts.</summary>
+        UIElement LuaCard(ModRow m)
+        {
+            var lu = m.Lu;
+            if (lu == null || st.Lua == null) return null;
+            var box = new StackPanel();
+            box.Children.Add(Label("lua_head", new Thickness(0, 0, 0, 6)));
+            void Line(string text, string colour = "Ink", bool strong = false) => box.Children.Add(new TextBlock
+            {
+                Text = text, TextWrapping = TextWrapping.Wrap, Foreground = B(colour), Margin = new Thickness(0, 2, 0, 2),
+                FontWeight = strong ? FontWeights.SemiBold : FontWeights.Normal,
+            });
+            var running = RunningLabel();
+            var owner = ById(st.Lua.BootOwner);
+            // a loader, or a mod with a boot of its own: whose start-up script the game runs
+            if (lu.Loader != null) Line(Texts.F("lua_loader", LoaderLabel(lu.Loader, lu.LoaderVersion)), "Ink", true);
+            if (lu.Boot != null)
+            {
+                if (lu.Loader == null) Line(Texts.Get("lua_own_boot"), "Ink", true);
+                if (!m.Enabled) { }
+                else if (owner?.Id == m.Id) Line(Texts.Get("lua_boot_runs"), "Blue");
+                else if (owner != null)
+                {
+                    Line(Texts.F("lua_boot_off", owner.Name), "Yellow");
+                    // the player decides whose runs: this one goes right after the one running now
+                    var use = new Button
+                    {
+                        Content = Texts.Get("lua_boot_use"), Style = (Style)FindResource("Ghost"), MinHeight = 34,
+                        HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 4), ToolTip = Texts.F("lua_boot_use_tip", owner.Name),
+                    };
+                    var after = owner.Id;
+                    use.Click += (s, e) => Run("move", m.Id, "--after", after);
+                    box.Children.Add(use);
+                }
+            }
+            // what starts it, and whether that is what runs
+            if (lu.Needs != null)
+            {
+                Line(Texts.Get(lu.Needs == "chef" ? "lua_needs_chef" : "lua_needs_any"), "Muted");
+                if (m.Enabled)
+                {
+                    var issues = IssuesOf(m).ToList();
+                    var same = issues.FirstOrDefault(i => i.Kind == "same_name");
+                    if (issues.Any(i => i.Kind == "no_loader"))
+                        Line(st.Lua.Running == "other" && owner != null ? Texts.F("lua_other_boot", owner.Name) : Texts.Get("lua_no_loader"), "Yellow");
+                    else if (issues.Any(i => i.Kind == "needs_chef"))
+                        Line(Texts.F("lua_wrong_loader", running ?? "-"), "Yellow");
+                    else if (running != null) Line(Texts.F("lua_running", running), "Muted");
+                    if (same.Kind != null)
+                    {
+                        var winner = ById(same.Mods[0]);
+                        if (same.Mods[0] != m.Id) Line(Texts.F("lua_same_name", winner?.Name ?? "?", same.Detail), "Yellow");
+                        else Line(Texts.F("lua_same_name_wins", string.Join(", ", same.Mods.Skip(1).Select(id => ById(id)?.Name ?? "?")), same.Detail), "Muted");
+                    }
+                }
+            }
+            // what the game's Lua cannot run
+            if (lu.Broken.Count > 0)
+            {
+                Line(Texts.Get("lua_broken"), "Red", true);
+                foreach (var b in lu.Broken)
+                {
+                    string text = b.Message != null ? Texts.F("lua_broken_line", b.Script, b.Line, b.Message)
+                        : b.LuaJitBytecode ? Texts.F("lua_broken_bytecode", b.Script)
+                        : Texts.F("lua_broken_jit", b.Script, string.Join(", ", b.Jit));
+                    box.Children.Add(new TextBlock { Text = "· " + text, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = B("Ink"), Margin = new Thickness(0, 1, 0, 1) });
+                }
+            }
+            // a translation pack, and the packs of a mod
+            if (lu.PackOfName != null)
+            {
+                var of = ById(lu.PackOf);
+                if (of == null) Line(Texts.F("lua_pack_missing", lu.PackOfName), m.Enabled ? "Yellow" : "Muted");
+                else if (!of.Enabled) Line(Texts.F("lua_pack_off", of.Name), m.Enabled ? "Yellow" : "Muted");
+                else Line(Texts.F("lua_pack", of.Name), "Muted");
+            }
+            var packs = PacksOf(m);
+            if (packs.Count > 0) Line(Texts.F("lua_packs", string.Join(", ", packs.Select(p => p.Name))), "Muted");
+            // the last session, as Boot Mod Loader logged it
+            if (lu.LastState != null)
+            {
+                var when = When(st.Lua.SessionWhen);
+                if (lu.LastState == "loaded") Line(Texts.F("lua_last_loaded", when, lu.LastMs), "Muted");
+                else Line(Texts.F(lu.LastState == "failed" ? "lua_last_failed" : "lua_last_nocompile", when, (lu.LastWhy ?? "").Split('\n')[0]), "Red");
+            }
+            if (box.Children.Count <= 1) return null;
+            return Panel(box, new Thickness(0, 16, 0, 0));
+        }
+
+        /// <summary>The left column's card on the load order's Lua: the loader in effect, what
+        /// will not run, the last session, and a crash since the last look (the user, 2026-10-26).</summary>
+        void LuaSide()
+        {
+            var lua = st.Lua;
+            if (lua == null) return;
+            bool any = st.Mods.Any(x => x.Enabled && x.Lu != null && (x.Lu.Needs != null || x.Lu.Loader != null || x.Lu.Boot != null));
+            bool crash = NewCrash();
+            if (!any && !crash) return;
+            var card = new StackPanel();
+            if (crash)
+            {
+                card.Children.Add(new TextBlock { Text = Texts.F("crash_head", When(lua.CrashWhen)), FontWeight = FontWeights.SemiBold, Foreground = B("Red"), TextWrapping = TextWrapping.Wrap });
+                if (lua.CrashDeployedWhen > 0)
+                {
+                    var t = new TextBlock { Text = Texts.F("crash_mods", When(lua.CrashDeployedWhen), lua.CrashMods.Count), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), ToolTip = string.Join("\n", lua.CrashMods) };
+                    card.Children.Add(t);
+                    var luaThen = lua.CrashMods.Where(n => st.Mods.Any(x => x.Name == n && x.Lu != null && x.Lu.Loader == null)).ToList();
+                    if (luaThen.Count > 0) card.Children.Add(Small(Texts.F("crash_lua", string.Join(", ", luaThen)), new Thickness(0, 4, 0, 0)));
+                }
+                else card.Children.Add(Small(Texts.Get("crash_unknown"), new Thickness(0, 4, 0, 0)));
+                var ok = new Button { Content = Texts.Get("crash_ok"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(0, 8, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
+                ok.Click += (s, e) => { SeenCrash(lua.CrashWhen); RenderNav(); };
+                card.Children.Add(ok);
+                if (any) card.Children.Add(new Border { Height = 1, Background = B("Grid"), Margin = new Thickness(0, 12, 0, 10) });
+            }
+            if (any)
+            {
+                var running = RunningLabel();
+                var owner = ById(lua.BootOwner);
+                string head = running != null ? Texts.F("lua_side_running", running)
+                    : lua.Running == "other" && owner != null ? Texts.F("lua_side_other", owner.Name) : Texts.Get("lua_side_none");
+                // a dock, not a horizontal stack: the words wrap at the card's edge
+                var line = new DockPanel();
+                bool fine = running != null && lua.Issues.Count == 0;
+                var dot = new Ellipse { Width = 8, Height = 8, Fill = B(fine ? "Blue" : "Yellow"), Margin = new Thickness(0, 7, 8, 0), VerticalAlignment = VerticalAlignment.Top };
+                DockPanel.SetDock(dot, Dock.Left);
+                line.Children.Add(dot);
+                line.Children.Add(new TextBlock { Text = head, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+                card.Children.Add(line);
+                void Say(string text) => card.Children.Add(new TextBlock { Text = text, FontSize = 12, Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) });
+                foreach (var g in lua.Issues.GroupBy(i => i.Kind))
+                {
+                    var first = g.First();
+                    switch (g.Key)
+                    {
+                        case "boot_conflict": Say(Texts.F("lua_side_boot_conflict", first.Mods.Count, ById(first.Mods[0])?.Name ?? "?")); break;
+                        case "two_loaders": Say(Texts.F("lua_side_two_loaders", running ?? "-")); break;
+                        case "no_loader": Say(Texts.F("lua_side_no_loader", first.Mods.Count(id => ById(id)?.Lu?.Needs != null))); break;
+                        case "needs_chef": Say(Texts.F("lua_side_needs_chef", first.Mods.Count)); break;
+                        case "same_name": Say(Texts.F("lua_side_same", g.Count())); break;
+                        case "cannot_run": Say(Texts.F("lua_side_broken", g.Count())); break;
+                        case "pack_alone": Say(Texts.F("lua_side_pack", g.Count())); break;
+                    }
+                }
+                if (lua.Started >= 0)
+                    card.Children.Add(Small(Texts.F("lua_side_session", When(lua.SessionWhen), lua.Started, lua.Total), new Thickness(0, 8, 0, 0)));
+                if (Texts.Hints && lua.Issues.Count > 0) card.Children.Add(Small(Texts.Get("lua_side_note"), new Thickness(0, 6, 0, 0)));
+            }
+            Nav.Children.Add(new Border { Height = 12 });
+            Nav.Children.Add(new Border { BorderBrush = B(crash ? "Red" : "Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(12), Child = card });
+        }
+
+        /// <summary>A crash dump newer than the last one the player dismissed. The first time,
+        /// the dumps already there count as seen: only a crash from then on is news.</summary>
+        bool NewCrash()
+        {
+            var when = st.Lua?.CrashWhen ?? 0;
+            if (when <= 0) return false;
+            Dictionary<string, object> d;
+            try { d = Store.Load("gui.json"); }
+            catch (Exception e) when (e is IOException || e is FormatException) { return false; }
+            if (!d.ContainsKey("crash_seen")) { SeenCrash(when); return false; }
+            return when > Json.Long(d, "crash_seen");
+        }
+
+        void SeenCrash(long when)
+        {
+            try
+            {
+                var d = Store.Load("gui.json");
+                d["crash_seen"] = when;
+                Store.Save("gui.json", d);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+        }
 
         /// <summary>Any one of the labels the filter holds (or no filter at all), and none it
         /// leaves out.</summary>
@@ -1216,6 +1455,7 @@ namespace QuickDeploy
                 case "broken": return m.Error != null;
                 case "lua": return m.Lua;
                 case "updates": return HasUpdate(m);
+                case "norun": return NoRun(m) != null;
                 default: return true;
             }
         }
@@ -1287,10 +1527,11 @@ namespace QuickDeploy
                 ("updates", scope.Count(HasUpdate)),
                 ("off", scope.Count(m => !m.Enabled)),
                 ("conflict", scope.Count(m => m.Conflicts > 0)), ("broken", scope.Count(m => m.Error != null)),
+                ("norun", scope.Count(m => NoRun(m) != null)),
             };
             foreach (var (key, n) in defs)
             {
-                if ((key == "broken" || key == "updates") && n == 0 && filter != key) continue;
+                if ((key == "broken" || key == "updates" || key == "norun") && n == 0 && filter != key) continue;
                 bool cur = filter == key, hot = (key == "pending" || key == "broken" || key == "updates") && n > 0;
                 var btn = new Button { Cursor = Cursors.Hand, FocusVisualStyle = null, Margin = new Thickness(0, 2, 0, 2) };
                 var row = new Border
@@ -1369,6 +1610,7 @@ namespace QuickDeploy
             purge.Click += Purge_Click;
             card.Children.Add(purge);
             Nav.Children.Add(new Border { BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(12), Child = card });
+            LuaSide();
         }
 
         // ---------------------------------------------------------------- Nexus Mods downloads
@@ -2262,6 +2504,8 @@ namespace QuickDeploy
             Add(m.Index); Add(m.Name); Add(m.Path); Add(m.Enabled); Add(m.Icon); Add(m.Status); Add(m.Error); Add(m.Lua); Add(m.Loader); Add(string.Join(",", m.Tags)); Add(HasUpdate(m)); Add(m.ShownVersion); Add(m.VersionFrom);
             Add(Checked(m)?.Status); Add(checkingOne.Contains(m.Id)); Add(checking); Add(updated.Contains(m.Id));
             Add(m.Files.Count); Add(m.DeployBytes); Add(m.LibraryBytes); Add(m.Changes); Add(m.Conflicts); Add(m.Shared); Add(m.Chosen); Add(m.Choices);
+            Add(NoRun(m)?.Text);
+            foreach (var p in PacksOf(m)) { Add(p.Id); Add(p.Name); Add(p.Enabled); Add(p.Id == selectedId); Add(NoRun(p)?.Text); }
             if (open.Contains(m.Id))
                 foreach (var o in m.Options)
                 {
@@ -2445,6 +2689,9 @@ namespace QuickDeploy
             // the same bytes in two mods are only worth a mention (the user, 2026-10-24)
             if (m.Shared > 0) meta.Children.Add(Fact(Texts.F("row_same", m.Shared), "Muted", Texts.Get("same_tip")));
             if (m.Error != null) meta.Children.Add(new TextBlock { Text = Texts.Get("broken"), FontSize = 12, Foreground = B("Yellow") });
+            // its scripts will not run, and the shortest why (the details say the rest)
+            var noRun = NoRun(m);
+            if (noRun != null) meta.Children.Add(Fact(noRun.Value.Text, noRun.Value.Colour));
             names.Children.Add(meta);
             who.Children.Add(names);
             pick.Content = who;
@@ -2454,6 +2701,7 @@ namespace QuickDeploy
             line.Children.Add(pick);
 
             if (isOpen) col.Children.Add(Options(m));
+            foreach (var p in PacksOf(m)) col.Children.Add(PackLine(p));
 
             // dragging changes the load order (in the full list only, not the library's)
             if (filter == "all" && !viewLibrary)
@@ -2475,6 +2723,39 @@ namespace QuickDeploy
             var id = m.Id;
             item.ContextMenuOpening += (s, e) => item.ContextMenu = Menu(st?.Mods.FirstOrDefault(x => x.Id == id) ?? m);
             return item;
+        }
+
+        /// <summary>A translation pack as one small line under the mod it translates (the user,
+        /// 2026-10-26): its tick turns it on and off, its name shows its details, its menu is a row's.</summary>
+        UIElement PackLine(ModRow p)
+        {
+            bool cur = p.Id == selectedId;
+            var line = new DockPanel { Margin = new Thickness(4, 0, 16, 8), Background = Brushes.Transparent };
+            // its place in the load order, under the rows' numbers: they do not seem to skip one
+            var num = new TextBlock
+            {
+                Text = st.ProfilesOn && !p.InProfile ? "" : p.Index.ToString(), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"),
+                Width = 28, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 92, 0),
+            };
+            DockPanel.SetDock(num, Dock.Left);
+            line.Children.Add(num);
+            var tick = new CheckBox { Style = (Style)FindResource("Tick"), IsChecked = p.Enabled, VerticalAlignment = VerticalAlignment.Center, ToolTip = p.Name };
+            tick.Click += (s, e) => { bool on = tick.IsChecked == true; Change(p.Id, c => c.Enabled = on, on ? "enable" : "disable", p.Id); };
+            DockPanel.SetDock(tick, Dock.Left);
+            line.Children.Add(tick);
+            var name = new Button { Template = Plain(), Cursor = Cursors.Hand, FocusVisualStyle = null, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+            var words = new TextBlock { FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, Opacity = p.Enabled ? 1 : 0.55 };
+            words.Inlines.Add(new System.Windows.Documents.Run(Texts.Get("pack_line") + "  ·  ") { Foreground = B("Muted") });
+            words.Inlines.Add(new System.Windows.Documents.Run(p.Name) { Foreground = B(cur ? "Yellow" : "Ink"), FontWeight = cur ? FontWeights.SemiBold : FontWeights.Normal });
+            var noRun = NoRun(p);
+            if (noRun != null) words.Inlines.Add(new System.Windows.Documents.Run("   " + noRun.Value.Text) { Foreground = B(noRun.Value.Colour) });
+            name.Content = words;
+            name.Click += (s, e) => { Current(p.Id); RenderList(); RenderDetail(); };
+            line.Children.Add(name);
+            line.ContextMenu = Menu(p);
+            var id = p.Id;
+            line.ContextMenuOpening += (s, e) => line.ContextMenu = Menu(st?.Mods.FirstOrDefault(x => x.Id == id) ?? p);
+            return line;
         }
 
         /// <summary>A row clicked: on its own it is the one shown; with Ctrl it joins or leaves
@@ -2914,6 +3195,10 @@ namespace QuickDeploy
             }
             if (!string.IsNullOrEmpty(m.Source) && m.Source != m.Path) Fact("d_source", m.Source, true);
             Detail.Children.Add(facts);
+            // its scripts: what starts them, and whether they will run (the user, 2026-10-26);
+            // before its updates, which matter less than whether it runs at all
+            var luaCard = LuaCard(m);
+            if (luaCard != null) Detail.Children.Add(luaCard);
             Detail.Children.Add(UpdatePanel(m));
 
             // what a deploy does to it

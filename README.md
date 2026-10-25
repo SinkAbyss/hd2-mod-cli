@@ -91,7 +91,7 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 | Part | What it shows and does |
 |---|---|
 | Title bar | How many mods, how many are on, how many changes wait for a deploy; **Deploy / Storage / Labels** to switch pages; a gear for the settings (the language, whether the mod that wins is shown at the bottom of the list or at the top, whether the lines that explain things are shown, this program's updates, who made it and where it comes from); a red dot on the gear when a newer version of this program is out; the hard-linked files in the game. |
-| Library (left) | Filters: all mods, those with changes to deploy, Lua mods, off, with conflicts, and any that cannot be read. |
+| Library (left) | Filters: all mods, those with changes to deploy, Lua mods, off, with conflicts, any that cannot be read, and the ones whose scripts **will not run**. |
 | Deploy target (left) | The library and game folders, and whether they share a drive (hard links) or not (copies). **Change…** picks another game folder. When the game holds copies that could be hard links, **Make hard links** frees their space without writing anything. |
 | Filter (left of the search box) | Narrows the list to your own labels: a mod shows when it carries any of the labels ticked. Alt+click a label to hide the mods that carry it. |
 | Search (above the list) | Finds mods by any word in their metadata, not only the name: the author's description, options and their descriptions, folders, patch file names (archive ids), Nexus mod ids, *lua*, *loader*, and your own labels. Several words: all must match. |
@@ -190,6 +190,26 @@ from:
 - An update keeps the mod's place in the load order, on/off and options; then
   deploy.
 
+### Lua mods before a deploy
+
+The game runs one start-up script (`boot`): the one in the highest patch. Boot
+Mod Loader, Chef Shared Loader, Objective Tracker and Medic3038's installer
+each bring one, so only one of them runs. The window reads every mod's Lua
+scripts before a deploy and says what will happen; it never changes another
+mod's files and never chooses for you.
+
+| What it checks | What you see |
+|---|---|
+| **Start-up scripts** | Which mod's `boot` the game runs, and whose does not. A mod whose `boot` does not run has **Use this mod's start-up script** in its details: it moves the mod right after the one that runs now. |
+| **The loader each mod needs** | Read from the script's first lines. `-- HD2-Addon:` starts on Boot Mod Loader or Chef Shared Loader; `-- HD2-Requires: chef-shared-loader` (or `-- HD2-Boot:`) only on Chef Shared Loader. The list says when no loader is on, when a mod needs one that is not in effect, and when two loaders are on. |
+| **Scripts the game's Lua cannot run** | Since the 2026-10-20 update the game runs plain Lua 5.1, without LuaJIT. A script that does not compile (goto, LuaJIT's `ULL` numbers, Lua 5.2+ operators, a BOM, more than 200 locals or 60 upvalues in a function, and the rest), LuaJIT bytecode, or `ffi`, `bit` or `jit` used with no fallback is marked **Cannot run**. The syntax check follows PUC Lua 5.1's own lexer and parser; it agreed with PUC Lua 5.1 on all 15,394 scripts it was compared on (`tests/lua_syntax_vs_puc.py`). Comments and strings never count. |
+| **Two mods with one name** | Two mods declaring the same `mods/<author>/<name>`: only the later one runs. |
+| **Translation packs** | A pack (the same author's folder, the mod's name and a language, wrapping the old menus' calls, as ActionCam简体中文 does) is one small line under the mod it translates, with its own tick. When that mod is off or not installed, the list says the translation does not apply. |
+| **The last session** | Boot Mod Loader's log of the last launch: which mods started, how long each took, and which failed or did not compile, with the reason. |
+| **A crash** | When the game leaves a new crash dump, the left column shows when it crashed (the time the dump was written) and the mods this program had deployed then. |
+
+All of it is read outside the game, before a deploy: nothing runs in the game.
+
 ### Good to know
 
 - **Use one manager for deploying.** A deploy from another manager would undo
@@ -258,6 +278,8 @@ A change made on the command line shows in an open window half a second later.
 | `tags` | Your own labels, with how many mods carry each. |
 | `tag MOD NAME...` / `untag MOD NAME...` | Put labels on a mod, or take them off (`--all` takes them all off). |
 | `tag-rename OLD NEW` / `tag-delete NAME` | Rename a label everywhere, or take it off every mod. |
+| `lua` | The mods' Lua before a deploy: whose start-up script runs, which loader that is, what each mod needs, what the game's Lua cannot run, the last session and the last crash (read only). |
+| `lua-syntax FILE...` | Whether Lua files compile on the game's Lua (PUC 5.1, no LuaJIT): OK, or the line and why. |
 | `conflicts [-v]` | Resources that more than one mod ships, and which one wins; the ones every mod ships byte for byte alike are named as shared, not as a conflict. `-v` lists each resource's type and id, and its name from HD2SDK's name list when HD2SDK is installed. |
 | `state [--verify]` | Everything the window shows, as JSON. |
 
@@ -292,6 +314,7 @@ Everything is kept in `%USERPROFILE%\.hd2-mod-cli` (`HD2MOD_HOME` overrides it):
 | `deployed.json` | What the last deploy put in the game folder. |
 | `same.json` | Large files already compared, so they are not read again. |
 | `gui.json` | The window's own settings (its language, which way the list is shown, the explaining lines). |
+| `deploy_history.json` | When each of the last 50 deploys ran and which mods it put in the game, so that a crash can be matched with them. |
 | `self_update.json` | The last check of this program's own releases, and whether the window checks by itself (at most once a day). |
 | `*.json.bak` | The version each file had before the last save. Mods can be downloaded again; what you chose — the mods, their order, their options, their labels — cannot, and it is a few kilobytes. To go back, rename the `.bak` over the file. |
 
@@ -384,7 +407,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 | 位置 | 内容与功能 |
 |---|---|
 | 标题栏 | mod 数、启用数、待部署的变更数；**部署 / 存储 / 标签** 切换页面；齿轮按钮打开设置（界面语言、列表中优先的 mod 显示在下方还是上方、是否显示说明文字、本程序的更新、作者与项目地址），有新版本时齿轮右上角显示红点；游戏目录中的硬链接文件 |
-| 左侧 · MOD 库 | 筛选：全部、待部署、Lua mod、已停用、冲突、读取出错 |
+| 左侧 · MOD 库 | 筛选：全部、待部署、Lua mod、已停用、冲突、读取出错，以及脚本**不会运行**的 mod |
 | 左侧 · 部署目标 | mod 库与游戏目录，以及二者是否位于同一分区（硬链接）或不同分区（复制）。**更改…** 用于更换游戏目录；游戏目录中存在可改为硬链接的复制件时，**改为硬链接** 可在不写入数据的情况下释放空间。卡片底部为 **恢复原版** |
 | 筛选（搜索框左侧） | 按自己贴的标签过滤：mod 带有任一所选标签即显示。按住 Alt 键点击标签，可隐藏带有该标签的 MOD |
 | 搜索（列表上方） | 按元数据中的任意词查找 mod，不限于名称：作者说明、可选内容及其说明、文件夹、patch 文件名（档案编号）、Nexus 编号、*lua*。输入多个词时须全部匹配 |
@@ -442,6 +465,22 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 - 有更新的 mod 在列表中显示黄色标记，并可通过 **有更新** 筛选查看。
 - 更新后，mod 的加载顺序、开关和可选内容保持不变；之后执行部署即可生效。
 
+### Lua mod 部署前检查
+
+游戏只运行一个启动脚本（`boot`），即补丁编号最高的那个。Boot Mod Loader、Chef Shared Loader、Objective Tracker 和 Medic3038 的安装器都带有启动脚本，因此只有其中一个会运行。窗口在部署前读取每个 mod 的 Lua 脚本，说明将会发生的情况；不会修改其他 mod 的文件，也不会替玩家做选择。
+
+| 检查内容 | 显示方式 |
+|---|---|
+| **启动脚本** | 游戏运行的是哪个 mod 的 `boot`，哪些不会运行。启动脚本不会运行的 mod，详情中有 **改由此 mod 的启动脚本生效**：将该 mod 移到当前生效者之后。 |
+| **每个 mod 需要的加载器** | 读取脚本开头几行。`-- HD2-Addon:` 可由 Boot Mod Loader 或 Chef Shared Loader 启动；`-- HD2-Requires: chef-shared-loader`（或 `-- HD2-Boot:`）仅能由 Chef Shared Loader 启动。没有启用加载器、需要的加载器未生效、同时启用两个加载器时，均会提示。 |
+| **游戏无法运行的脚本** | 2026-10-20 更新后，游戏使用 Lua 5.1，不再是 LuaJIT。无法编译的脚本（goto、LuaJIT 的 `ULL` 数字、Lua 5.2 及以后的运算符、BOM、单个函数超过 200 个局部变量或 60 个上值等）、LuaJIT 字节码、以及没有备用方案地使用 `ffi`、`bit`、`jit` 的脚本，标为 **无法运行**。语法检查按照 PUC Lua 5.1 自身的词法和语法分析器实现，与 PUC Lua 5.1 对比的 15,394 个脚本结论全部一致（`tests/lua_syntax_vs_puc.py`）。注释与字符串中的内容不计。 |
+| **同名 mod** | 两个 mod 声明同一个 `mods/<作者>/<名称>` 时，只有加载顺序靠后的那个会运行。 |
+| **翻译包** | 翻译包（与原 mod 同一作者目录、名称为原 mod 名加语言后缀，并包装旧菜单的登记调用，例如 ActionCam简体中文）显示为原 mod 下方的一行小字，带有自己的勾选框。原 mod 未启用或未安装时，提示翻译不会生效。 |
+| **上一局** | Boot Mod Loader 上次启动游戏时的日志：哪些 mod 已启动、各自用时，以及哪些启动失败或无法编译，并附原因。 |
+| **崩溃** | 游戏留下新的崩溃转储时，左侧显示崩溃时间（转储文件的写入时间）以及当时本程序部署的 mod。 |
+
+以上检查均在游戏外、部署前完成，不在游戏中运行任何内容。
+
 ### 注意事项
 
 - **请仅使用一个管理器部署。** 使用其他管理器部署会覆盖本程序的部署，反之亦然。
@@ -459,6 +498,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
     hd2qd folders            # 列出 mod 库文件夹
     hd2qd status             # 显示部署将执行的更改，不做修改
     hd2qd check-updates      # 检查来自 GitHub 的 mod 是否有新版本
+    hd2qd lua                # 部署前检查 Lua mod：启动脚本、加载器、无法运行的脚本、上一局、上次崩溃
     hd2qd self-update        # 检查本程序是否有新版本（正式版只看正式发布，开发版也看预发布）
     hd2qd deploy
 

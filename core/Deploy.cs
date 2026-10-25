@@ -250,9 +250,9 @@ namespace Hd2Mod
             }
         }
 
-        static int Fill(Stream s, byte[] buf) => Fill(s, buf, buf.Length);
+        internal static int Fill(Stream s, byte[] buf) => Fill(s, buf, buf.Length);
 
-        static int Fill(Stream s, byte[] buf, int want)
+        internal static int Fill(Stream s, byte[] buf, int want)
         {
             int n = 0;
             while (n < want)
@@ -418,6 +418,9 @@ namespace Hd2Mod
             {
                 ["game_dir"] = game, ["saved_bytes"] = r.SavedBytes, ["deploys"] = Json.Long(before, "deploys") + 1, ["files"] = files,
             });
+            // when, and which mods: after a crash, what was in the game then (the user, 2026-10-26)
+            try { LuaMods.Record(d.All.Select(w => w.Mod)); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
             }
             return r;
         }

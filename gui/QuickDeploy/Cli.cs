@@ -35,6 +35,37 @@ namespace QuickDeploy
         public List<SubOption> Subs = new List<SubOption>();
     }
 
+    /// <summary>A mod's Lua, as the core read it from its archives (LuaMods).</summary>
+    class LuaInfo
+    {
+        /// <summary>"any", "chef" or null; a loader itself: "bml", "chef", "bsl".</summary>
+        public string Needs, Loader, LoaderVersion;
+        /// <summary>Its own start-up script's kind (bml, chef_stub, chef, bsl, other), else null.</summary>
+        public string Boot;
+        public List<string> Scripts = new List<string>();
+        public List<(string Script, int Line, string Message, List<string> Jit, bool LuaJitBytecode)> Broken =
+            new List<(string, int, string, List<string>, bool)>();
+        /// <summary>The mod it translates (its id when installed) and that mod's script name.</summary>
+        public string PackOf, PackOfName;
+        /// <summary>Boot Mod Loader's log of the last session: loaded, failed or no_compile.</summary>
+        public string LastState, LastWhy;
+        public int LastMs;
+    }
+
+    /// <summary>The load order's Lua: whose boot runs, the problems, the last session, the last crash.</summary>
+    class LuaCheck
+    {
+        public string BootOwner, BootKind, Running;
+        public List<string> BootMods = new List<string>();
+        public List<(string Kind, List<string> Mods, string Detail)> Issues = new List<(string, List<string>, string)>();
+        public string SessionLoader;
+        public long SessionWhen;
+        public int Started = -1, Total = -1;
+        public string CrashFile;
+        public long CrashWhen, CrashDeployedWhen;
+        public List<string> CrashMods = new List<string>();
+    }
+
     class ModRow
     {
         public int Index;
@@ -42,6 +73,8 @@ namespace QuickDeploy
         /// <summary>The name the mod came with, when the player gave it another one.</summary>
         public string RealName;
         public bool Enabled, Exists, HasManifest, SameDrive, Lua, Loader;
+        /// <summary>Its Lua scripts, when it has any.</summary>
+        public LuaInfo Lu;
         /// <summary>In the profile in use (always, with profiles off).</summary>
         public bool InProfile = true;
         public long NexusMod;
@@ -141,6 +174,7 @@ namespace QuickDeploy
         public List<Clash> Clashes = new List<Clash>();
         /// <summary>Whether resources can be named (HD2SDK's list was found).</summary>
         public bool ResourceNames;
+        public LuaCheck Lua;
         /// <summary>The folders of old versions left in the library folder.</summary>
         public List<Leftover> Leftovers = new List<Leftover>();
         /// <summary>The game folder against the library, as the last state read found it.</summary>
@@ -249,6 +283,28 @@ namespace QuickDeploy
                     Resources = List(c, "resources").OfType<Dictionary<string, object>>().Select(r => (Str(r, "type"), Str(r, "id"), Str(r, "name"))).ToList(),
                 });
             s.ResourceNames = Bool(d, "resource_names");
+            if (d.TryGetValue("lua_check", out var lcv) && lcv is Dictionary<string, object> lc)
+            {
+                var lua = new LuaCheck { BootOwner = Str(lc, "boot_owner"), BootKind = Str(lc, "boot_kind"), Running = Str(lc, "running") };
+                foreach (var id in List(lc, "boot_mods").OfType<string>()) lua.BootMods.Add(id);
+                foreach (var i in List(lc, "issues").OfType<Dictionary<string, object>>())
+                    lua.Issues.Add((Str(i, "kind"), List(i, "mods").OfType<string>().ToList(), Str(i, "detail")));
+                if (lc.TryGetValue("session", out var sv) && sv is Dictionary<string, object> se)
+                {
+                    lua.SessionLoader = Str(se, "loader");
+                    lua.SessionWhen = Long(se, "when");
+                    lua.Started = Int(se, "started");
+                    lua.Total = Int(se, "total");
+                }
+                if (lc.TryGetValue("crash", out var cv) && cv is Dictionary<string, object> cr)
+                {
+                    lua.CrashFile = Str(cr, "file");
+                    lua.CrashWhen = Long(cr, "when");
+                    lua.CrashDeployedWhen = Long(cr, "deployed_when");
+                    lua.CrashMods = List(cr, "mods").OfType<string>().ToList();
+                }
+                s.Lua = lua;
+            }
             foreach (var m in List(d, "mods").OfType<Dictionary<string, object>>())
             {
                 var row = new ModRow
@@ -277,6 +333,23 @@ namespace QuickDeploy
                 foreach (var f in List(m, "files").OfType<Dictionary<string, object>>())
                     row.Files.Add(new FileRow { Name = Str(f, "name"), Src = Str(f, "src"), Action = Str(f, "action"), From = Str(f, "from"),
                                                 Companions = Int(f, "companions"), Bytes = Long(f, "bytes"), Linked = Bool(f, "linked") });
+                if (m.TryGetValue("lua_info", out var liv) && liv is Dictionary<string, object> li)
+                {
+                    var lu = new LuaInfo
+                    {
+                        Needs = Str(li, "needs"), Loader = Str(li, "loader"), LoaderVersion = Str(li, "loader_version"), Boot = Str(li, "boot"),
+                        Scripts = List(li, "scripts").OfType<string>().ToList(), PackOf = Str(li, "pack_of"), PackOfName = Str(li, "pack_of_name"),
+                    };
+                    foreach (var b in List(li, "broken").OfType<Dictionary<string, object>>())
+                        lu.Broken.Add((Str(b, "script"), Int(b, "line"), Str(b, "message"), List(b, "jit").OfType<string>().ToList(), Bool(b, "luajit_bytecode")));
+                    if (li.TryGetValue("last", out var lv) && lv is Dictionary<string, object> last)
+                    {
+                        lu.LastState = Str(last, "state");
+                        lu.LastWhy = Str(last, "why");
+                        lu.LastMs = Int(last, "ms");
+                    }
+                    row.Lu = lu;
+                }
                 row.Conflicts = s.Clashes.Where(c => !c.Same && c.Mods.Contains(row.Name)).Sum(c => c.Count);
                 row.Shared = s.Clashes.Where(c => c.Same && c.Mods.Contains(row.Name)).Sum(c => c.Count);
                 s.Mods.Add(row);
