@@ -3525,9 +3525,10 @@ namespace QuickDeploy
         /// <summary>A filter's menu stays open while choices are taken, so several can be lit at
         /// once. A menu is a window of its own, though, and while it is open the wheel goes to
         /// it wherever the pointer is: the list would not scroll anywhere until something was
-        /// clicked to dismiss it (the user, 2026-10-25). So the menu closes once the pointer has
-        /// been inside it and left again, and a turn of the wheel from outside closes it and
-        /// scrolls the page on show instead of being spent on the menu.
+        /// clicked to dismiss it (the user, 2026-10-25). So a turn of the wheel from outside closes
+        /// it and scrolls the page on show instead of being spent on the menu. The pointer
+        /// leaving it does not close it: a menu stays open until a choice, a click outside or Esc
+        /// (the user, 2026-10-25: closing on leave is not how menus behave).
         ///
         /// The handlers go on that window's own root, not on the menu: with the mouse held by
         /// the menu, an event never reaches a child of the element that holds it. Only for menus
@@ -3536,9 +3537,7 @@ namespace QuickDeploy
         {
             lastMenu = menu;
             UIElement root = null;
-            bool entered = false;
             MouseWheelEventHandler wheel = null;
-            MouseEventHandler move = null;
             wheel = (s, e) =>
             {
                 if (Over(menu, e)) return;
@@ -3548,17 +3547,11 @@ namespace QuickDeploy
                 if (page != null) page.ScrollToVerticalOffset(page.VerticalOffset - e.Delta);
                 e.Handled = true;
             };
-            move = (s, e) =>
-            {
-                if (Over(menu, e)) { entered = true; return; }
-                if (entered) menu.IsOpen = false;      // it opens under the pointer, so only
-            };                                         // once the pointer has really been in it
             menu.Opened += (s, e) =>
             {
                 root = (PresentationSource.FromVisual(menu) as HwndSource)?.RootVisual as UIElement;
                 if (root == null) return;
                 root.PreviewMouseWheel += wheel;
-                root.PreviewMouseMove += move;
             };
             // the moment it closes, not its Closed event: that comes after the click that closed
             // it has already reached the button underneath
@@ -3578,9 +3571,7 @@ namespace QuickDeploy
                 SetFocus(new System.Windows.Interop.WindowInteropHelper(this).Handle);
                 if (root == null) return;
                 root.PreviewMouseWheel -= wheel;
-                root.PreviewMouseMove -= move;
                 root = null;
-                entered = false;
             };
         }
 

@@ -38,6 +38,12 @@
     <Style TargetType="TextBlock">
       <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
     </Style>
+    <!-- a button with no style of its own (a plain template drawn in code) takes the window's
+         ink, not the system's black text: twice that black came out on the dark ground (the
+         label rows 2026-10-24, the profile title 2026-10-25) -->
+    <Style TargetType="Button">
+      <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+    </Style>
     <Style x:Key="Label" TargetType="TextBlock">
       <Setter Property="FontSize" Value="12"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
