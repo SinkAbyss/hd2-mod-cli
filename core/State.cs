@@ -282,6 +282,7 @@ namespace Hd2Mod
                 mods.Add(new Dictionary<string, object>
                 {
                     ["index"] = (long)index, ["id"] = m.Id, ["name"] = m.Name, ["real_name"] = m.RealName, ["enabled"] = m.Enabled, ["path"] = m.Path,
+                    ["in_profile"] = Profiles.InProfile(lib, m),
                     ["source"] = m.Source, ["exists"] = exists, ["manifest"] = manifest != null,
                     ["description"] = Or(manifest?.Description, m.Description) ?? "", ["options"] = options,
                     ["icon"] = (exists ? Picture(m.Path, manifest?.IconPath, null) : null) ?? Site.PictureOf(m.Id),
@@ -306,6 +307,9 @@ namespace Hd2Mod
                 ["summary"] = summary, ["links"] = links, ["saved_bytes"] = Json.Long(record, "saved_bytes"),
                 ["deploys"] = Json.Long(record, "deploys"), ["deletes"] = deletes.Cast<object>().ToList(),
                 ["mods"] = mods, ["conflicts"] = clashes, ["tags"] = lib.Tags.Cast<object>().ToList(),
+                // profiles: whether they are on, the one in use, all of them (Profiles)
+                ["profiles_on"] = lib.ProfilesOn, ["profile"] = lib.ProfilesOn ? lib.Active : null,
+                ["profiles"] = lib.Profiles.Select(p => (object)p.Name).ToList(),
                 ["deploying"] = Deploying(),
                 ["check"] = CheckBlock(lib, game, d),
                 ["leftovers"] = Ops.Leftovers(lib, null).Select(d => (object)new Dictionary<string, object>

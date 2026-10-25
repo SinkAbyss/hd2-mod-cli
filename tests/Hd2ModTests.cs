@@ -196,6 +196,73 @@ namespace Hd2Mod.Tests
             Assert.Contains("kept 12, moved 0, wrote 0", Cli("deploy"));
         }
 
+        /// <summary>Profiles, a switch of their own (the user, 2026-10-25): off, one list; on, the
+        /// library holds every mod and each profile some of them, with its own order, on/off and
+        /// options. Only the profile in use deploys; a mod added goes into the profile in use.</summary>
+        [Fact]
+        public void ProfilesHoldTheirOwnModsOrderAndOptions()
+        {
+            string[] Names() => Library.Load().Mods.Select(m => m.Name).ToArray();
+            string[] On() => Library.Load().Mods.Where(m => m.Enabled).Select(m => m.Name).ToArray();
+            Cli("deploy");
+            Assert.Contains("profiles are off", Cli("profiles"));
+            CliCode(1, "profile-new", "Solo");                                   // not while they are off
+            Cli("profiles-on");
+            Assert.Contains("* Default  (3 mods, 3 on)", Cli("profiles"));
+            // an empty profile, two of the library's mods put in, its own order
+            Cli("profile-new", "Solo", "--empty");
+            Cli("profile-use", "Solo");
+            Assert.Empty(On());
+            Assert.Empty(Deployed());
+            Cli("profile-add", "One", "Three");
+            Cli("move", "One", "--bottom");
+            Cli("deploy");
+            Assert.Equal(new[] { "Three", "One" }, On());
+            Assert.Equal(new[] { "three", "one" }, new[] { Body(A + ".patch_0"), Body(A + ".patch_1") });
+            Assert.Contains("* Solo  (2 mods, 2 on)", Cli("profiles"));
+            // back to Default: its three, its order
+            Cli("profile-use", "Default");
+            Assert.Equal(new[] { "One", "Two", "Three" }, On());
+            Assert.Equal(new[] { "one", "two", "three" }, new[] { Body(A + ".patch_0"), Body(A + ".patch_1"), Body(A + ".patch_2") });
+            // a mod added goes into the profile in use only
+            Cli("add", Mod("Four", Files((B + ".patch_1", "four"))));
+            Assert.Contains("* Default  (4 mods, 4 on)", Cli("profiles"));
+            Assert.Contains("  Solo  (2 mods, 2 on)", Cli("profiles"));
+            Cli("profile-use", "Solo", "--no-deploy");
+            Assert.Equal(new[] { "Three", "One" }, On());
+            Assert.Equal(new[] { "Three", "One" }, Names().Take(2));               // its own mods first
+            // out of the profile, still in the library
+            Cli("profile-remove", "One");
+            Assert.Equal(new[] { "Three" }, On());
+            Assert.Contains(Library.Load().Mods, m => m.Name == "One");
+            Cli("profile-add", "One");
+            // a mod's options are each profile's own
+            Cli("add", Mod("Cape", Files(("a/" + B + ".patch_0", "cape-a"), ("b/" + B + ".patch_0", "cape-b")),
+                           "{\"Name\": \"Cape\", \"Options\": [{\"Name\": \"Pick\", \"SubOptions\": [" +
+                           "{\"Name\": \"A\", \"Include\": [\"a\"]}, {\"Name\": \"B\", \"Include\": [\"b\"]}]}]}"));
+            Cli("set", "Cape", "1.2", "on"); Cli("set", "Cape", "1.1", "off");  // Solo: B
+            Cli("profile-use", "Default", "--no-deploy");
+            Cli("profile-add", "Cape");
+            Cli("set", "Cape", "1.1", "on"); Cli("set", "Cape", "1.2", "off");  // Default: A
+            string Chosen() => Library.Load().Mods.Single(m => m.Name == "Cape").Options[0].Subs.Single(s => s.Enabled).Name;
+            Assert.Equal("A", Chosen());
+            Cli("profile-use", "Solo", "--no-deploy");
+            Assert.Equal("B", Chosen());
+            // off: one list of every mod; on again: the profile as it was kept
+            Cli("profiles-off");
+            Assert.Equal(5, Library.Load().Mods.Count);
+            Assert.Contains("profiles are off", Cli("profiles"));
+            Cli("profiles-on");
+            Assert.Contains("* Solo  (3 mods", Cli("profiles"));
+            // the one in use cannot go; renamed, deleted
+            CliCode(1, "profile-delete", "Solo");
+            Cli("profile-rename", "Solo", "Online");
+            Assert.Contains("* Online", Cli("profiles"));
+            Cli("profile-delete", "Default");
+            Assert.DoesNotContain("Default", Cli("profiles"));
+            CliCode(1, "profile-new", "online");                                 // names are one regardless of case
+        }
+
         [Fact]
         public void ReorderOnlyRenames()
         {

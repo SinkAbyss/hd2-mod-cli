@@ -94,6 +94,15 @@ namespace Hd2Mod
             Cmd("options", new Spec { Help = "a mod's options and sub-options", Positionals = new[] { "mod" }, Run = Options }),
             Cmd("set", new Spec { Help = "turn an option or sub-option on or off: OPTION, OPTION/SUB, or 2.3",
                                   Positionals = new[] { "mod", "option", "value" }, Flags = new[] { "--only" }, Run = Set }),
+            Cmd("profiles", new Spec { Help = "the profiles: each its own mods, load order, on/off and options; * marks the one in use", Run = ProfilesCmd }),
+            Cmd("profiles-on", new Spec { Help = "turn profiles on: the first time, a profile Default of every mod", Run = (a, o) => Profiling(o, true) }),
+            Cmd("profiles-off", new Spec { Help = "turn profiles off: one list of every mod again (the profiles are kept)", Run = (a, o) => Profiling(o, false) }),
+            Cmd("profile-new", new Spec { Help = "a new profile, a copy of the one in use, which stays in use (--empty: no mods)", Positionals = new[] { "name" }, Flags = new[] { "--empty" }, Run = ProfileNew }),
+            Cmd("profile-add", new Spec { Help = "put mods of the library into the profile in use, at its bottom, on", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => ProfileMembers(a, o, true) }),
+            Cmd("profile-remove", new Spec { Help = "take mods out of the profile in use (they stay in the library)", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => ProfileMembers(a, o, false) }),
+            Cmd("profile-use", new Spec { Help = "switch to a profile and deploy it (--no-deploy: switch only)", Positionals = new[] { "name" }, Flags = new[] { "--no-deploy" }, Run = ProfileUse }),
+            Cmd("profile-rename", new Spec { Help = "rename a profile", Positionals = new[] { "name", "to" }, Run = ProfileRename }),
+            Cmd("profile-delete", new Spec { Help = "delete a profile (not the one in use); the mods stay in the library", Positionals = new[] { "name" }, Run = ProfileDelete }),
             Cmd("deploy", new Spec { Help = "make the game folder match the load order, touching only what differs",
                                      Flags = new[] { "--dry-run", "--copy", "--verify" }, Run = DeployCmd }),
             Cmd("status", new Spec { Help = "what a deploy would change", Flags = new[] { "--verify" }, Run = Status }),
@@ -148,7 +157,7 @@ namespace Hd2Mod
         /// record or the game folder.</summary>
         static readonly HashSet<string> ReadOnly = new HashSet<string>
         {
-            "folders", "list", "tags", "status", "check", "which", "state", "conflicts",
+            "folders", "list", "tags", "status", "check", "which", "state", "conflicts", "profiles",
         };
 
         static bool Writes(string command, Args a) =>
@@ -783,6 +792,72 @@ namespace Hd2Mod
             mod.Options = chosen;
             lib.Save();
             PrintOptions(Ops.Pick(Library.Load(), a.Pos["mod"]), o);
+        }
+
+        static void ProfilesCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            if (!lib.ProfilesOn) { o.WriteLine("profiles are off: one list of " + lib.Mods.Count + " mods (hd2qd profiles-on)"); return; }
+            Profiles.InUse(lib);
+            var ids = new HashSet<string>(lib.Mods.Select(m => m.Id));
+            foreach (var p in lib.Profiles)
+            {
+                bool cur = string.Equals(p.Name, lib.Active, StringComparison.CurrentCultureIgnoreCase);
+                var mine = p.Order.Where(ids.Contains).ToList();
+                o.WriteLine((cur ? "* " : "  ") + p.Name + "  (" + mine.Count + " mods, " + mine.Count(p.On.Contains) + " on)");
+            }
+            o.WriteLine(lib.Mods.Count + " mods in the library");
+        }
+
+        static void Profiling(TextWriter o, bool on)
+        {
+            var lib = Library.Load();
+            if (on) Profiles.TurnOn(lib); else Profiles.TurnOff(lib);
+            lib.Save();
+            o.WriteLine(on ? "profiles on; in use: " + lib.Active : "profiles off: one list of " + lib.Mods.Count + " mods");
+        }
+
+        static void ProfileMembers(Args a, TextWriter o, bool add)
+        {
+            var lib = Library.Load();
+            var mods = a.Rest.Select(r => Ops.Pick(lib, r)).ToList();
+            int n = add ? Profiles.Add(lib, mods) : Profiles.Remove(lib, mods);
+            lib.Save();
+            o.WriteLine(n + " mods " + (add ? "put into " : "taken out of ") + Ops.Repr(lib.Active) + (add ? "" : " (still in the library)"));
+        }
+
+        static void ProfileNew(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var p = Profiles.Make(lib, a.Pos["name"], a.Flag("--empty"));
+            lib.Save();
+            o.WriteLine("made " + Ops.Repr(p.Name) + ", a copy of " + Ops.Repr(lib.Active) + " (still in use): hd2qd profile-use " + Ops.Repr(p.Name));
+        }
+
+        static void ProfileUse(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var was = Profiles.InUse(lib).Name;
+            var p = Profiles.Use(lib, a.Pos["name"]);
+            lib.Save();
+            o.WriteLine("in use: " + p.Name + (string.Equals(was, p.Name, StringComparison.CurrentCultureIgnoreCase) ? " (already)" : " (was " + was + ")"));
+            if (!a.Flag("--no-deploy")) DeployCmd(new Args(), o);
+        }
+
+        static void ProfileRename(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            Profiles.Rename(lib, a.Pos["name"], a.Pos["to"]);
+            lib.Save();
+            o.WriteLine("renamed " + Ops.Repr(a.Pos["name"]) + " to " + Ops.Repr(a.Pos["to"].Trim()));
+        }
+
+        static void ProfileDelete(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            Profiles.Delete(lib, a.Pos["name"]);
+            lib.Save();
+            o.WriteLine("deleted the profile " + Ops.Repr(a.Pos["name"]) + "; its mods stay in the library");
         }
 
         static void DeployCmd(Args a, TextWriter o)

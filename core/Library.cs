@@ -73,11 +73,32 @@ namespace Hd2Mod
         /// before its mods are chosen has to outlive the window (the user, 2026-10-24).</summary>
         public List<string> Tags = new List<string>();
         public string ImportedFrom;
+        /// <summary>Profiles (Profiles): whether they are on, the profiles, the one in use (whose
+        /// order, on/off and options are the list's own), and its mods. Known is every mod id the
+        /// library had when last saved: one it did not have was just added, and goes into the
+        /// profile in use, wherever it was added from.</summary>
+        public bool ProfilesOn;
+        public List<Profile> Profiles = new List<Profile>();
+        public string Active;
+        public HashSet<string> Members;
+        HashSet<string> known;
 
         public static Library Load()
         {
             var d = Store.Load("library.json");
-            var lib = new Library { ImportedFrom = Json.Str(d, "imported_from") };
+            var lib = new Library { ImportedFrom = Json.Str(d, "imported_from"), Active = Json.Str(d, "active_profile"), ProfilesOn = Json.Bool(d, "profiles_on") };
+            foreach (var p in Json.List(d, "profiles").OfType<Dictionary<string, object>>())
+            {
+                var profile = new Profile { Name = Json.Str(p, "name") ?? "" };
+                profile.Order.AddRange(Json.List(p, "order").OfType<string>());
+                foreach (var id in Json.List(p, "on").OfType<string>()) profile.On.Add(id);
+                foreach (var kv in Json.Obj(p, "options") ?? new Dictionary<string, object>())
+                    if (kv.Value is List<object> list) profile.Options[kv.Key] = ReadOptions(list);
+                if (profile.Name.Length > 0) lib.Profiles.Add(profile);
+            }
+            var inUse = lib.Profiles.FirstOrDefault(p => string.Equals(p.Name, lib.Active, StringComparison.CurrentCultureIgnoreCase));
+            if (lib.ProfilesOn && inUse != null) lib.Members = new HashSet<string>(inUse.Order);
+            else lib.ProfilesOn = false;
             foreach (var t in Json.List(d, "tags"))
                 if (t is string tag && tag.Trim().Length > 0 && !lib.Tags.Any(x => string.Equals(x, tag.Trim(), StringComparison.CurrentCultureIgnoreCase)))
                     lib.Tags.Add(tag.Trim());
@@ -119,6 +140,8 @@ namespace Hd2Mod
                 };
                 lib.Mods.Add(mod);
             }
+            var was = Json.List(d, "known").OfType<string>().ToList();
+            lib.known = new HashSet<string>(was.Count > 0 ? was : lib.Mods.Select(m => m.Id));
             return lib;
         }
 
@@ -184,6 +207,30 @@ namespace Hd2Mod
                     if (!labels.Any(x => string.Equals(x, t, StringComparison.CurrentCultureIgnoreCase))) labels.Add(t);
             if (labels.Count > 0) d["tags"] = labels.Cast<object>().ToList();
             if (ImportedFrom != null) d["imported_from"] = ImportedFrom;
+            if (Profiles.Count > 0)
+            {
+                if (ProfilesOn && Members != null)
+                {
+                    // a mod new to the library goes into the profile in use; one outside it is off
+                    foreach (var m in Mods)
+                        if (known != null && !known.Contains(m.Id)) Members.Add(m.Id);
+                    foreach (var m in Mods.Where(m => !Members.Contains(m.Id))) m.Enabled = false;
+                    // the one in use as the list stands now
+                    int i = Profiles.FindIndex(p => string.Equals(p.Name, Active, StringComparison.CurrentCultureIgnoreCase));
+                    if (i >= 0) Profiles[i] = Hd2Mod.Profiles.Capture(this, Profiles[i].Name);
+                }
+                d["profiles_on"] = ProfilesOn;
+                d["active_profile"] = Active;
+                d["profiles"] = Profiles.Select(p => (object)new Dictionary<string, object>
+                {
+                    ["name"] = p.Name,
+                    ["order"] = p.Order.Cast<object>().ToList(),
+                    ["on"] = p.Order.Where(p.On.Contains).Cast<object>().ToList(),
+                    ["options"] = p.Options.Where(kv => kv.Value.Count > 0).ToDictionary(kv => kv.Key, kv => (object)OptionsJson(kv.Value)),
+                }).ToList();
+            }
+            d["known"] = Mods.Select(m => (object)m.Id).ToList();
+            known = new HashSet<string>(Mods.Select(m => m.Id));
             Store.Save("library.json", d);
         }
 

@@ -234,6 +234,9 @@ A change made on the command line shows in an open window half a second later.
 | `delete MOD... --yes` | Delete mods from the disk for good: out of the library and the game (one deploy), their folders deleted. |
 | `enable MOD...` / `disable MOD...` | Turn mods on or off. |
 | `move MOD --top / --bottom / --to N / --before M / --after M` | Change the load order. |
+| `profiles-on` / `profiles-off` / `profiles` | Profiles: off, one list; on, the library holds every mod and each profile some of them, with its own load order, on/off and options (the first time on, a profile `Default` of every mod). `profiles` lists them. |
+| `profile-new NAME [--empty]` / `profile-use NAME` / `profile-rename NAME NEW` / `profile-delete NAME` | Make a profile (a copy of the one in use, or empty), switch to one (it deploys), rename, delete. |
+| `profile-add MOD...` / `profile-remove MOD...` | Put library mods into the profile in use, or take them out (they stay in the library). |
 | `options MOD` | A mod's options and sub-options, numbered. |
 | `set MOD OPTION on/off` | Turn an option on or off. `OPTION/SUB` or `2.3` for a sub-option; `--only` turns that sub-option on and the option's others off. |
 | `status [--verify]` | What a deploy would change, file by file. Changes nothing. |

@@ -1124,7 +1124,9 @@ namespace QuickDeploy
         void Render()
         {
             int on = st.Mods.Count(m => m.Enabled);
-            SummaryText.Text = st.GameDir == null ? Texts.Get("no_game") : Texts.F("summary", st.Mods.Count, on, st.Pending);
+            // only the missing game folder is said under the title: the counts were noise there (the user, 2026-10-25)
+            SummaryText.Text = st.GameDir == null ? Texts.Get("no_game") : "";
+            SummaryText.Visibility = st.GameDir == null ? Visibility.Visible : Visibility.Collapsed;
             StatLinks.Text = Texts.F("stat_links_v", Texts.N(st.LinkedFiles), Texts.Size(st.LinkedBytes));
             DeployBtn.Content = st.Pending > 0 ? Texts.F("deploy_n", st.Pending) : Texts.Get("deploy");
             DeployBtn.IsEnabled = st.Deploying == null;      // two at once would undo each other
@@ -1210,8 +1212,8 @@ namespace QuickDeploy
                 Nav.Children.Add(btn);
             }
 
-            // the deploy target
-            Nav.Children.Add(Label("target", new Thickness(8, 24, 0, 4)));
+            // the deploy target, without a heading: its state says what it is (the user, 2026-10-25)
+            Nav.Children.Add(new Border { Height = 24 });
             var card = new StackPanel();
             int far = st.Mods.Count(m => m.Exists && !m.SameDrive);
             string state = far == 0 ? "target_link" : far == st.Mods.Count(m => m.Exists) ? "target_copy" : "target_mixed";
