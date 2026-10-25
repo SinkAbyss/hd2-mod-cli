@@ -88,7 +88,7 @@ namespace Hd2Mod
                                      Positionals = new[] { "mods" }, Many = true, Flags = new[] { "--yes" }, Run = DeleteCmd }),
             Cmd("enable", new Spec { Help = "turn mods on", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => Switch(a, o, true) }),
             Cmd("disable", new Spec { Help = "turn mods off", Positionals = new[] { "mods" }, Many = true, Run = (a, o) => Switch(a, o, false) }),
-            Cmd("move", new Spec { Help = "move a mod in the load order", Positionals = new[] { "mod" },
+            Cmd("move", new Spec { Help = "move mods in the load order; several move as one block, in the order they have", Positionals = new[] { "mods" }, Many = true,
                                    Flags = new[] { "--top", "--bottom" }, Values = new[] { "--to", "--before", "--after" },
                                    OneOf = new[] { "--top", "--bottom", "--to", "--before", "--after" }, Run = Move }),
             Cmd("options", new Spec { Help = "a mod's options and sub-options", Positionals = new[] { "mod" }, Run = Options }),
@@ -781,25 +781,30 @@ namespace Hd2Mod
         static void Move(Args a, TextWriter o)
         {
             var lib = Library.Load();
-            var mod = Ops.Pick(lib, a.Pos["mod"]);
             var mods = lib.Mods;
+            // several mods move as one block, in the order they have (the user, 2026-10-25: a
+            // drag of the mods taken together); every one is found before anything moves
+            var block = a.Rest.Select(r => Ops.Pick(lib, r)).Distinct().OrderBy(m => mods.IndexOf(m)).ToList();
             string before = a.Value("--before"), after = a.Value("--after");
             Mod other = null;
             if (!string.IsNullOrEmpty(before) || !string.IsNullOrEmpty(after))
             {
                 other = Ops.Pick(lib, !string.IsNullOrEmpty(before) ? before : after);
-                if (other == mod) throw new ModError("a mod cannot move next to itself");
+                if (block.Contains(other))
+                    throw new ModError(block.Count == 1 ? "a mod cannot move next to itself" : "the mods cannot move next to one of themselves");
             }
-            mods.Remove(mod);
             int to = a.Value("--to") != null ? int.Parse(a.Value("--to")) : 0;
-            if (a.Flag("--top")) mods.Insert(0, mod);
-            else if (a.Flag("--bottom")) mods.Add(mod);
-            else if (!string.IsNullOrEmpty(before)) mods.Insert(mods.IndexOf(other), mod);
-            else if (!string.IsNullOrEmpty(after)) mods.Insert(mods.IndexOf(other) + 1, mod);
-            else if (to != 0) mods.Insert(Math.Max(0, Math.Min(mods.Count, to - 1)), mod);
-            else throw new ModError("say where: --top, --bottom, --to N, --before MOD or --after MOD");
+            if (!a.Flag("--top") && !a.Flag("--bottom") && other == null && to == 0)
+                throw new ModError("say where: --top, --bottom, --to N, --before MOD or --after MOD");
+            foreach (var m in block) mods.Remove(m);
+            int at = a.Flag("--top") ? 0
+                : a.Flag("--bottom") ? mods.Count
+                : !string.IsNullOrEmpty(before) ? mods.IndexOf(other)
+                : !string.IsNullOrEmpty(after) ? mods.IndexOf(other) + 1
+                : Math.Max(0, Math.Min(mods.Count, to - 1));
+            mods.InsertRange(at, block);
             lib.Save();
-            o.WriteLine((mods.IndexOf(mod) + 1) + " " + mod.Name);
+            foreach (var m in block) o.WriteLine((mods.IndexOf(m) + 1) + " " + m.Name);
         }
 
         static void PrintOptions(Mod mod, TextWriter o)

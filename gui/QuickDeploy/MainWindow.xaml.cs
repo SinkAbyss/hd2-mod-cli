@@ -413,6 +413,26 @@ namespace QuickDeploy
                 k.Start();
                 return;
             }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "manymenu")
+            {
+                // "manymenu": the first three rows taken together and their menu open, for its picture
+                var k = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                k.Tick += (s, e) =>
+                {
+                    k.Stop();
+                    var three = Seen().Take(3).ToList();
+                    if (three.Count < 2) return;
+                    foreach (var x in three) picked.Add(x.Id);
+                    RenderList();
+                    UpdateLayout();
+                    if (!rows.TryGetValue(three[0].Id, out var r)) return;
+                    r.Row.ContextMenu = Menu(three[0]);
+                    r.Row.ContextMenu.PlacementTarget = r.Row;
+                    r.Row.ContextMenu.IsOpen = true;
+                };
+                k.Start();
+                return;
+            }
             if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "menu")
             {
                 // "menu": a row's menu with the labels open under it, for its picture
@@ -589,7 +609,7 @@ namespace QuickDeploy
                     var onto = rows[seen[0].Id].Row;
                     double top = onto.TranslatePoint(new Point(0, 0), ListArea).Y;
                     BeginDrag(dragged, rows[dragged.Id].Row, new Point(10, top + onto.ActualHeight * 0.75), 5, false);
-                    said.Add("row " + dragged.Index + " dropped just below the top row (" + seen[0].Index + "): lands at " + dropTo);
+                    said.Add("row " + dragged.Index + " dropped just below the top row (" + seen[0].Index + "): lands at " + (dropAnchor == null ? 0 : Moved(st.Mods, dragBlock, dropAnchor, dropAfter).IndexOf(dragged) + 1));
                     EndDrag(false);
                     said.Add("row menu: " + string.Join(" | ", Menu(seen[0]).Items.OfType<MenuItem>().Select(x => x.Header as string).Where(x => x != null)));
                     said.Add("hint: " + ListHint.Text);
@@ -754,8 +774,21 @@ namespace QuickDeploy
                 t.Stop();
                 var m = st?.Mods.FirstOrDefault(x => x.Index == n);
                 if (m == null || !rows.TryGetValue(m.Id, out var r)) return;
+                // HD2QD_DRAG_PICK=2,4: those places taken together first
+                var pick = (Environment.GetEnvironmentVariable("HD2QD_DRAG_PICK") ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var p in pick)
+                    if (int.TryParse(p, out var k) && st.Mods.FirstOrDefault(x => x.Index == k) is ModRow px) picked.Add(px.Id);
+                if (picked.Count > 0) { RenderList(); UpdateLayout(); }
+                if (!rows.TryGetValue(m.Id, out r)) return;          // a row drawn again for the taken ones is a new row
                 var top = r.Row.TranslatePoint(new Point(0, 0), ListArea).Y;
                 BeginDrag(m, r.Row, new Point(200, top + 20 + dy), 20, false);   // no mouse to hold it
+                // HD2QD_DRAG_DROP=1: let go a second later
+                if (Environment.GetEnvironmentVariable("HD2QD_DRAG_DROP") == "1")
+                {
+                    var t2 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    t2.Tick += (s2, e2) => { t2.Stop(); EndDrag(true); };
+                    t2.Start();
+                }
             };
             t.Start();
         }
@@ -2510,9 +2543,11 @@ namespace QuickDeploy
         // window's meanwhile, so no OLE drag runs and dropping files in still works.
         Border dragRow;          // the row being dragged
         ModRow dragMod;          // the mod it is
+        List<ModRow> dragBlock = new List<ModRow>();   // every mod carried: the ones taken together when it is one of them, in load order
         UIElement ghost;         // its picture, under the pointer
         double grabY;            // where inside the row the pointer took hold
-        int dropTo;              // the place it would land, 1-based; 0 = where it already is
+        ModRow dropAnchor;       // the mod the block would land next to; null = it would stay where it is
+        bool dropAfter;          // after it in the load order, else before
         double edgeBy;           // pixels per tick while the pointer is at the list's edge
         readonly DispatcherTimer edgeScroll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
 
@@ -2532,12 +2567,30 @@ namespace QuickDeploy
             // is see-through while the acrylic backdrop is on
             var ground = (B("Ground700") as SolidColorBrush)?.Color ?? Colors.Black;
             ground.A = 0xFF;
+            var inside = new Grid();
+            inside.Children.Add(new Image { Source = bmp, Width = w, Height = h, Stretch = Stretch.Fill });
+            // several carried: how many, on the picture's top edge, over no text (the user, 2026-10-25)
+            if (dragBlock.Count > 1)
+                inside.Children.Add(new Border
+                {
+                    Background = B("Yellow"), Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, -11, 16, 0),
+                    HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                    Child = new TextBlock { Text = Texts.F("drag_n", dragBlock.Count), Foreground = B("TapeInk"), FontWeight = FontWeights.SemiBold, FontSize = 12 },
+                });
             return new Border
             {
                 Width = w, Height = h, Background = new SolidColorBrush(ground),
                 BorderBrush = B("Yellow"), BorderThickness = new Thickness(1),
-                Child = new Image { Source = bmp, Width = w, Height = h, Stretch = Stretch.Fill },
+                Child = inside,
             };
+        }
+
+        /// <summary>The rows of the mods carried, dimmed while they are, or bright again.</summary>
+        void DimCarried(double opacity)
+        {
+            foreach (var x in dragBlock)
+                if (rows.TryGetValue(x.Id, out var r)) r.Row.Opacity = opacity;
+            if (dragRow != null) dragRow.Opacity = opacity;
         }
 
         void BeginDrag(ModRow m, Border row, Point at, double inRow, bool grab = true)
@@ -2546,10 +2599,12 @@ namespace QuickDeploy
             dragFrom = null;
             dragRow = row;
             dragMod = m;
+            // a row of the mods taken together carries all of them (the user, 2026-10-25)
+            dragBlock = Taken(m);
             grabY = inRow;
             ghost = Ghost(row);
             DragLayer.Children.Add(ghost);
-            row.Opacity = 0.3;
+            DimCarried(0.3);
             if (grab) Mouse.Capture(ListArea, CaptureMode.SubTree);
             DragAt(at);
         }
@@ -2573,16 +2628,15 @@ namespace QuickDeploy
                 onto = x; over = r; below = at.Y > top + r.ActualHeight / 2;
                 if (at.Y < top + r.ActualHeight) break;
             }
-            int to = 0;
-            if (onto != null && onto != dragMod)
+            dropAnchor = null;
+            if (onto != null && !dragBlock.Any(x => x.Id == onto.Id))
             {
                 // below on screen is later in the load order, unless the list is shown the other way round
                 bool later = Texts.TopWins ? !below : below;
-                to = later ? onto.Index + 1 : onto.Index;
-                if (dragMod.Index < to) to -= 1;
+                // a place that leaves the order as it is is no place to drop
+                if (!Moved(st.Mods, dragBlock, onto, later).SequenceEqual(st.Mods)) { dropAnchor = onto; dropAfter = later; }
             }
-            dropTo = to == dragMod.Index ? 0 : to;
-            if (dropTo == 0 || over == null) ClearDrop();
+            if (dropAnchor == null || over == null) ClearDrop();
             else
             {
                 ClearDrop();
@@ -2595,27 +2649,45 @@ namespace QuickDeploy
             else if (!edgeScroll.IsEnabled) edgeScroll.Start();
         }
 
-        /// <summary>The drag over: the row put where it was let go (commit), or left alone.</summary>
+        /// <summary>The load order with the block taken out and put back, in its own order, next to
+        /// anchor. By id: a row on screen may hold an older read of its mod than the order does.</summary>
+        static List<ModRow> Moved(List<ModRow> order, List<ModRow> block, ModRow anchor, bool after)
+        {
+            var ids = new HashSet<string>(block.Select(x => x.Id));
+            var carried = order.Where(x => ids.Contains(x.Id)).ToList();
+            var rest = order.Where(x => !ids.Contains(x.Id)).ToList();
+            int at = rest.FindIndex(x => x.Id == anchor.Id);
+            if (at < 0) return order;
+            rest.InsertRange(at + (after ? 1 : 0), carried);
+            return rest;
+        }
+
+        /// <summary>The drag over: the mods carried put where they were let go (commit), or left alone.</summary>
         void EndDrag(bool commit)
         {
             if (dragRow == null) return;
             edgeScroll.Stop();
-            dragRow.Opacity = 1;
+            DimCarried(1);
             if (ghost != null) DragLayer.Children.Remove(ghost);
             ghost = null;
             var moving = dragMod;
-            int to = dropTo;
-            dragRow = null; dragMod = null; dragFrom = null; dropTo = 0;
+            var block = dragBlock;
+            var anchor = dropAnchor;
+            bool after = dropAfter;
+            dragRow = null; dragMod = null; dragFrom = null; dropAnchor = null; dragBlock = new List<ModRow>();
             ClearDrop();
             if (Mouse.Captured == ListArea) Mouse.Capture(null);
-            if (!commit || moving == null || to == 0 || to == moving.Index) return;
+            if (!commit || moving == null || anchor == null) return;
             Current(moving.Id);
+            var args = new List<string> { "move" };
+            args.AddRange(block.Select(x => x.Id));
+            args.Add(after ? "--after" : "--before");
+            args.Add(anchor.Id);
             Change(moving.Id, c =>
             {
-                st.Mods.Remove(c);
-                st.Mods.Insert(to - 1, c);
+                st.Mods = Moved(st.Mods, block, anchor, after);
                 for (int k = 0; k < st.Mods.Count; k++) st.Mods[k].Index = k + 1;
-            }, "move", moving.Id, "--to", to.ToString());
+            }, args.ToArray());
         }
 
         static (string, string) StatusText(ModRow m)
@@ -3113,15 +3185,14 @@ namespace QuickDeploy
                 off.Click += (s, e) => { foreach (var x in many.Where(x => x.Enabled)) Change(x.Id, c => c.Enabled = false, "disable", x.Id); };
                 menu.Items.Add(off);
                 // the top and bottom of the screen: with the winner shown at the top, the other
-                // ends of the load order
-                List<string[]> First() => Enumerable.Reverse(many).Select(x => new[] { "move", x.Id, "--top" }).ToList();
-                List<string[]> Last() => many.Select(x => new[] { "move", x.Id, "--bottom" }).ToList();
+                // ends of the load order. One move of them all, in the order they have
+                string[] To(string end) => new[] { "move" }.Concat(many.Select(x => x.Id)).Concat(new[] { end }).ToArray();
                 ProfileItems(menu, many);
                 var up = new MenuItem { Header = Texts.F("many_top", many.Count) };
-                up.Click += (s, e) => RunMany(Texts.TopWins ? Last() : First());
+                up.Click += (s, e) => Run(To(Texts.TopWins ? "--bottom" : "--top"));
                 menu.Items.Add(up);
                 var down = new MenuItem { Header = Texts.F("many_bottom", many.Count) };
-                down.Click += (s, e) => RunMany(Texts.TopWins ? First() : Last());
+                down.Click += (s, e) => Run(To(Texts.TopWins ? "--top" : "--bottom"));
                 menu.Items.Add(down);
                 menu.Items.Add(TagMenu(m));
                 if (many.Any(x => x.Channel == "Nexus Mods" || x.Channel == "GitHub"))
@@ -3138,6 +3209,15 @@ namespace QuickDeploy
                     RunMany(many.Select(x => new[] { "remove", x.Id }).ToList());
                 };
                 menu.Items.Add(gone);
+                // the files themselves, last and in red (the user, 2026-10-25): the same question
+                // and the same deletion as the ticked mods on the storage page
+                var del = new MenuItem { Header = Texts.F("many_delete", many.Count), Foreground = B("Red") };
+                del.Click += (s, e) =>
+                {
+                    var ids = new HashSet<string>(many.Select(x => x.Id));
+                    DeleteTicked(Library.Load().Mods.Where(x => ids.Contains(x.Id)).ToList());
+                };
+                menu.Items.Add(del);
                 return menu;
             }
             // only what this menu alone can do: opening the folder, matching the source,

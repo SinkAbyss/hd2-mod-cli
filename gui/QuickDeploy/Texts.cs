@@ -215,6 +215,7 @@ namespace QuickDeploy
             ["clash_1"] = ("1 resource also in {1}", "与 {1} 有 1 处资源冲突"),
             ["clash_win"] = ("By the load order, {0}'s version is used.", "按加载顺序，{0} 的版本生效。"),
             ["clash_more"] = ("and {0} more", "另有 {0} 处"),
+            ["drag_n"] = ("{0} mods", "{0} 个 MOD"),
             ["clash_no_names"] = ("Resource names come from HD2SDK's name list. HD2SDK is not installed here, so only the type and id are shown.",
                                   "资源名称取自 HD2SDK 的名称表。本机未安装 HD2SDK，因此只显示类型与编号。"),
             // resource types as the conflicts name them; any other type is shown by its engine name
@@ -561,6 +562,7 @@ namespace QuickDeploy
             ["many_top"] = ("Move these {0} to the top", "将选中的 {0} 个移到顶部"),
             ["many_bottom"] = ("Move these {0} to the bottom", "将选中的 {0} 个移到底部"),
             ["many_remove"] = ("Remove these {0} from the library", "从库中移除选中的 {0} 个"),
+            ["many_delete"] = ("Delete these {0} from the disk…", "从硬盘删除选中的 {0} 个…"),
             ["many_remove_ask"] = ("Remove these {0} mods from the library? Their files stay where they are.",
                                    "要从库中移除选中的 {0} 个 mod 吗？它们的文件会保留在原处。"),
             ["rename"] = ("Rename…", "重命名…"),

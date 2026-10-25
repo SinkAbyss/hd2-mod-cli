@@ -95,7 +95,7 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 | Deploy target (left) | The library and game folders, and whether they share a drive (hard links) or not (copies). **Change…** picks another game folder. When the game holds copies that could be hard links, **Make hard links** frees their space without writing anything. |
 | Filter (left of the search box) | Narrows the list to your own labels: a mod shows when it carries any of the labels ticked. Alt+click a label to hide the mods that carry it. |
 | Search (above the list) | Finds mods by any word in their metadata, not only the name: the author's description, options and their descriptions, folders, patch file names (archive ids), Nexus mod ids, *lua*, *loader*, and your own labels. Several words: all must match. |
-| Mod list (middle) | The load order, top to bottom: **a mod lower in the list wins**. Each row: its number, its switch, its picture, its name, and under the name its version, what is chosen, a **LUA** tag when it runs scripts in the game and a **LOADER** tag when it replaces one of the game's own scripts the way a mod loader does; on the right a mark that checks this one mod for updates, its size and how it is deployed. Dropping a zip or a mod folder on the list installs it. Double-click a mod to give it a name of your own (the name it came with stays in its details); Ctrl or Shift takes several mods at once, and the right button turns them all on or off, moves them or removes them. |
+| Mod list (middle) | The load order, top to bottom: **a mod lower in the list wins**. Each row: its number, its switch, its picture, its name, and under the name its version, what is chosen, a **LUA** tag when it runs scripts in the game and a **LOADER** tag when it replaces one of the game's own scripts the way a mod loader does; on the right a mark that checks this one mod for updates, its size and how it is deployed. Dropping a zip or a mod folder on the list installs it. Double-click a mod to give it a name of your own (the name it came with stays in its details); Ctrl or Shift takes several mods at once: drag one of them and they all move together, in the order they have; the right button turns them all on or off, moves them, removes them or deletes them from the disk. |
 | Options (open a row with its arrow) | A mod's options as cards with their pictures, names and descriptions. A group is *pick one* (Ctrl+click for more); parts can each be on or off. |
 | Labels page | Your own labels for mods, with how many mods carry each one: make one, rename it, delete it, and tick the mods that carry it. |
 | Details (right) | The author's description (or, when the mod folder has none, what its site says), the load order, the folder, **Delete** (red), **Remove mod** and **Open its folder**; what the next deploy does to this mod (kept, renamed, new), its conflicts with other mods (each resource by its type, and by its name when HD2SDK is installed, e.g. "Model · Laser Sight W/ Flashlight"), the resources another mod ships byte for byte alike (shared, not fought over), and its source: **Match the source** asks the site what the mod is called and fills in its name, version, author, description and picture. |
@@ -107,7 +107,7 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
    a folder. It goes to the bottom of the list, so it wins over the others.
 2. **Turn it on or off** with its switch, and **choose its options** on its
    cards. Every click shows at once; the window works it out in the background.
-3. **Change the load order** by dragging a row.
+3. **Change the load order** by dragging a row (or several taken together).
 4. **Deploy**. The footer says what was kept, renamed, written and deleted, and
    how long it took.
 5. **Launch game** starts the game through Steam. If changes are not deployed
@@ -242,7 +242,7 @@ A change made on the command line shows in an open window half a second later.
 | `relocate MOD... --into FOLDER [--keep]` | Move mods into another mod folder (`--keep`: copy, the old folders stay); the game's copies of them become hard links. |
 | `delete MOD... --yes` | Delete mods from the disk for good: out of the library and the game (one deploy), their folders deleted. |
 | `enable MOD...` / `disable MOD...` | Turn mods on or off. |
-| `move MOD --top / --bottom / --to N / --before M / --after M` | Change the load order. |
+| `move MOD... --top / --bottom / --to N / --before M / --after M` | Change the load order. Several mods move as one block, in the order they have. |
 | `profiles-on` / `profiles-off` / `profiles` | Profiles: off, one list; on, the library holds every mod and each profile some of them, with its own load order, on/off and options (the first time on, a profile `Default` of every mod). `profiles` lists them. |
 | `profile-new NAME [--empty]` / `profile-use NAME` / `profile-rename NAME NEW` / `profile-delete NAME` | Make a profile (a copy of the one in use, or empty), switch to one (it deploys), rename, delete. |
 | `profile-add MOD...` / `profile-remove MOD...` | Put library mods into the profile in use, or take them out (they stay in the library). |
@@ -388,7 +388,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 | 左侧 · 部署目标 | mod 库与游戏目录，以及二者是否位于同一分区（硬链接）或不同分区（复制）。**更改…** 用于更换游戏目录；游戏目录中存在可改为硬链接的复制件时，**改为硬链接** 可在不写入数据的情况下释放空间。卡片底部为 **恢复原版** |
 | 筛选（搜索框左侧） | 按自己贴的标签过滤：mod 带有任一所选标签即显示。按住 Alt 键点击标签，可隐藏带有该标签的 MOD |
 | 搜索（列表上方） | 按元数据中的任意词查找 mod，不限于名称：作者说明、可选内容及其说明、文件夹、patch 文件名（档案编号）、Nexus 编号、*lua*。输入多个词时须全部匹配 |
-| 中间 · mod 列表 | 加载顺序自上而下，**越靠下优先级越高**。每行显示：序号、开关、图片、名称，名称下方为版本、已选内容、**LUA** 标签（会在游戏中运行脚本的 mod）与 **LOADER** 标签（替换了游戏自带脚本、相当于自带加载器的 mod）；右侧为单独检查该 mod 更新的图标、大小与部署方式。将 zip 压缩包或 mod 文件夹拖到列表上即可安装。双击 mod 可自定义名称（原名保留在详情中）；按住 Ctrl 或 Shift 可多选，右键可一起启用、停用、移动或移除 |
+| 中间 · mod 列表 | 加载顺序自上而下，**越靠下优先级越高**。每行显示：序号、开关、图片、名称，名称下方为版本、已选内容、**LUA** 标签（会在游戏中运行脚本的 mod）与 **LOADER** 标签（替换了游戏自带脚本、相当于自带加载器的 mod）；右侧为单独检查该 mod 更新的图标、大小与部署方式。将 zip 压缩包或 mod 文件夹拖到列表上即可安装。双击 mod 可自定义名称（原名保留在详情中）；按住 Ctrl 或 Shift 可多选：拖动其中一个，选中的 mod 会按原有顺序一起移动；右键可一起启用、停用、移动、移除或从硬盘删除 |
 | 可选内容（点击行左侧箭头展开） | 以卡片显示图片、名称和作者说明。一组内为单选（Ctrl+点击可多选）；附加内容可分别开关 |
 | 标签页 | 自己给 mod 贴的标签，显示每个标签上有多少 mod：新建、重命名、删除，并勾选属于该标签的 mod |
 | 右侧 · 详情 | 作者说明（mod 文件夹中没有说明时，显示来源网站的说明）、加载顺序、文件夹，以及 **删除**（红色外框）、**移除 mod**、**打开文件夹**；下次部署对该 mod 的处理（保留、重命名、新增），与其他 mod 的资源冲突（逐项列出资源类型；安装了 HD2SDK 时还会显示名称，如“模型 · Laser Sight W/ Flashlight”），以及与其他 mod 内容完全相同的资源（属于共用，不算冲突），以及来源：点击 **匹配来源信息** 可从网站取回该 mod 的名称、版本、作者、说明和图片 |
@@ -398,7 +398,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 1. **添加 mod**：将 zip 压缩包或 mod 文件夹拖到列表上，或点击“添加 mod…”选择 zip 或文件夹。新 mod 位于列表底部，优先级最高。
 2. **启用或停用 mod、选择可选内容**：点击开关或卡片。界面立即更新，计算在后台完成。
-3. **调整加载顺序**：拖动行。
+3. **调整加载顺序**：拖动行（多选后可一起拖动）。
 4. **部署**：底部显示保留、重命名、新增、删除的文件数及用时。
 5. **启动游戏**：通过 Steam 启动；存在未部署的变更时，会询问是否先部署。
 

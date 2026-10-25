@@ -1426,6 +1426,31 @@ namespace Hd2Mod.Tests
             Assert.Contains("Two", Cli("which", A + ".patch_1"));
         }
 
+        /// <summary>Several mods move as one block, in the order they have, wherever they are
+        /// sent (the user, 2026-10-25: dragging the mods taken together moved only one).</summary>
+        [Fact]
+        public void SeveralModsMoveAsOneBlock()
+        {
+            foreach (var n in new[] { "One", "Two", "Three", "Four", "Five" }) Cli("add", Mod(n, Files((A + ".patch_0", n))));
+            string Order() => string.Join(" ", Library.Load().Mods.Select(m => m.Name));
+            Cli("move", "Four", "Two", "--after", "Five");         // given out of order: they keep theirs
+            Assert.Equal("One Three Five Two Four", Order());
+            Cli("move", "5", "4", "--top");                         // by place, read before anything moves
+            Assert.Equal("Two Four One Three Five", Order());
+            Cli("move", "One", "Three", "--to", "1");
+            Assert.Equal("One Three Two Four Five", Order());
+            Cli("move", "Two", "One", "--before", "Five");
+            Assert.Equal("Three Four One Two Five", Order());
+            Cli("move", "Three", "Four", "--bottom");
+            Assert.Equal("One Two Five Three Four", Order());
+            // next to one of themselves: refused, nothing moved
+            CliCode(1, "move", "One", "Two", "--after", "Two");
+            Assert.Equal("One Two Five Three Four", Order());
+            // one mod moves as before
+            Cli("move", "Five", "--top");
+            Assert.Equal("Five One Two Three Four", Order());
+        }
+
         [Fact]
         public void WrongCommandLines()
         {
