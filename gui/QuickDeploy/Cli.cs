@@ -42,6 +42,8 @@ namespace QuickDeploy
         /// <summary>The name the mod came with, when the player gave it another one.</summary>
         public string RealName;
         public bool Enabled, Exists, HasManifest, SameDrive, Lua, Loader;
+        /// <summary>In the profile in use (always, with profiles off).</summary>
+        public bool InProfile = true;
         public long NexusMod;
         public string NexusPage;
         /// <summary>Where it comes from, for update checks: "Nexus Mods", "GitHub", another site's
@@ -128,6 +130,10 @@ namespace QuickDeploy
         public bool HasSummary;
         public List<string> Deletes = new List<string>();
         public List<ModRow> Mods = new List<ModRow>();
+        /// <summary>Profiles: whether they are on, the one in use, all of them.</summary>
+        public bool ProfilesOn;
+        public string Profile;
+        public List<string> Profiles = new List<string>();
         /// <summary>Every label the library knows, whether or not a mod carries it.</summary>
         public List<string> Tags = new List<string>();
         public List<Clash> Clashes = new List<Clash>();
@@ -202,7 +208,9 @@ namespace QuickDeploy
         {
             var d = (Dictionary<string, object>)Json.Parse(json);
             var s = new State { GameDir = Str(d, "game_dir"), Home = Str(d, "home"), Version = Str(d, "version"), ModsDir = Str(d, "mods_dir"),
-                                SavedBytes = Long(d, "saved_bytes"), Deploys = Int(d, "deploys") };
+                                SavedBytes = Long(d, "saved_bytes"), Deploys = Int(d, "deploys"),
+                                ProfilesOn = Bool(d, "profiles_on"), Profile = Str(d, "profile") };
+            if (d.TryGetValue("profiles", out var pl) && pl is List<object> names) s.Profiles = names.OfType<string>().ToList();
             if (d.TryGetValue("summary", out var sm) && sm is Dictionary<string, object> sum)
             {
                 s.HasSummary = true;
@@ -239,6 +247,7 @@ namespace QuickDeploy
                     Index = Int(m, "index"), Id = Str(m, "id"), Name = Str(m, "name"), RealName = Str(m, "real_name"), Path = Str(m, "path"),
                     Source = Str(m, "source"), Description = Str(m, "description"), Error = Str(m, "error"),
                     Enabled = Bool(m, "enabled"), Exists = Bool(m, "exists"), HasManifest = Bool(m, "manifest"),
+                    InProfile = !m.ContainsKey("in_profile") || Bool(m, "in_profile"),
                     Icon = Str(m, "icon"), SameDrive = Bool(m, "same_drive"), Lua = Bool(m, "lua"), Loader = Bool(m, "loader"), NexusMod = Long(m, "nexus_mod"), NexusPage = Str(m, "nexus_page"),
                     Channel = Str(m, "channel"), Page = Str(m, "page"), Version = Str(m, "version"),
                     SiteAuthor = Str(m, "site_author"), SiteSummary = Str(m, "site_summary"), SiteVersion = Str(m, "site_version"),

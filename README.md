@@ -130,6 +130,11 @@ The **Storage** page lists the folders that hold mods, as Steam lists its
 library folders: each with its drive, free space, how many mods it holds and
 their size, and whether it is on the game's drive.
 
+- **Profiles** (Settings, off by default): the mod library holds every mod,
+  and each profile some of them, with its own load order, on/off and options.
+  The list's title is the profile in use and opens the others, the mod library
+  (where a mod is put into the profile, or taken out, from its right-click menu)
+  and making, renaming and deleting profiles. Switching deploys at once.
 - **Game folder** (at the top): where the game is and whether Helldivers 2 is
   really there. *Change…* chooses it by hand; *Find automatically* looks in the
   Steam libraries on this computer.
@@ -400,6 +405,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 **存储** 页按照 Steam 游戏库文件夹的方式列出存放 mod 的文件夹，每个文件夹显示所在分区、可用空间、其中的 mod 数量与大小，以及是否与游戏位于同一分区。
 
+- **配置文件**（在设置中开启，默认关闭）：mod 库保存全部 mod，每个配置文件包含其中一部分，并有各自的加载顺序、开关与可选内容。列表标题即当前配置，点击可切换配置、查看 mod 库（右键 mod 可加入或移出当前配置），以及新建、重命名、删除配置。切换后立即部署。
 - **游戏目录**（最上方）：显示游戏位置，以及该位置是否确为 Helldivers 2。“更改…”可手动选择；“自动识别”会在本机的 Steam 库中查找。
 - **默认文件夹**：添加的 zip 放入此处。“设为默认”可更换默认文件夹；“从列表移除”仅将添加的文件夹移出列表，其中的文件保留。
 - **添加库文件夹…**：添加文件夹后，像 Steam 识别游戏库文件夹一样检查其中内容。其他管理器存放在此的 mod（HD2 Arsenal、HD2ModManager——即使其存储目录已更改——以及 Echelon）会按该管理器的列表导入，加载顺序、开关与可选内容一并保留；其他 mod 文件夹则原地加入。库中已有的 mod 不会重复加入。

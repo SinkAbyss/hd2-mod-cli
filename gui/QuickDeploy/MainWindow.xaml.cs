@@ -448,6 +448,25 @@ namespace QuickDeploy
                 g.Start();
                 return;
             }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "profilemenu" || Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "libview")
+            {
+                // "profilemenu": the menu at the list's title left open; "libview": the mod library on show
+                bool menu = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "profilemenu";
+                var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                g.Tick += (s, e) =>
+                {
+                    g.Stop();
+                    if (menu) ProfileBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, ProfileBtn));
+                    else
+                    {
+                        viewLibrary = true; RenderNav(); RenderList(); RenderDetail();
+                        // where the profile's own mods end
+                        Dispatcher.BeginInvoke(new Action(() => ListScroll.ScrollToVerticalOffset(4 * 73)), DispatcherPriority.Loaded);
+                    }
+                };
+                g.Start();
+                return;
+            }
             if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "dltime")
             {
                 // "dltime": how long the download page takes to draw, written down
@@ -1036,7 +1055,17 @@ namespace QuickDeploy
         readonly HashSet<string> fromFilter = new HashSet<string>();
         readonly HashSet<string> kindFilter = new HashSet<string>();
 
-        bool Shown(ModRow m) => InFilter(m) && Matches(m) && Labelled(m) && FromOne(m) && OfKind(m);
+        bool Shown(ModRow m) => InScope(m) && InFilter(m) && Matches(m) && Labelled(m) && FromOne(m) && OfKind(m);
+
+        // the mod library shown instead of the profile in use (profiles on)
+        bool viewLibrary;
+
+        /// <summary>In what the list shows: the profile in use, or with the library on show (or
+        /// profiles off) every mod.</summary>
+        bool InScope(ModRow m) => st == null || !st.ProfilesOn || viewLibrary || m.InProfile;
+
+        /// <summary>A profile's name as shown: the first one's in the window's language.</summary>
+        static string ProfileName(string name) => name == Profiles.First ? Texts.Get("pf_default") : name;
 
         /// <summary>The mods the list shows, top row first: the load order, or the other way round
         /// when the mod that wins is shown at the top (Texts.TopWins).</summary>
@@ -1178,13 +1207,16 @@ namespace QuickDeploy
         {
             Nav.Children.Clear();
             Nav.Children.Add(Label("library", new Thickness(8, 0, 0, 4)));
+            if (filter == "lua") filter = "all";
+            var scope = st.Mods.Where(InScope).ToList();
             var defs = new[]
             {
-                ("all", st.Mods.Count), ("pending", st.Mods.Count(m => m.Enabled && m.Changes > 0)),
-                ("updates", st.Mods.Count(HasUpdate)),
-                ("lua", st.Mods.Count(m => m.Lua)),
-                ("off", st.Mods.Count(m => !m.Enabled)),
-                ("conflict", st.Mods.Count(m => m.Conflicts > 0)), ("broken", st.Mods.Count(m => m.Error != null)),
+                // what needs doing something, counted in what the list shows (the profile in use,
+                // or the library); what a mod is (Lua and the rest) is the Filter's (the user, 2026-10-25)
+                ("all", scope.Count), ("pending", scope.Count(m => m.Enabled && m.Changes > 0)),
+                ("updates", scope.Count(HasUpdate)),
+                ("off", scope.Count(m => !m.Enabled)),
+                ("conflict", scope.Count(m => m.Conflicts > 0)), ("broken", scope.Count(m => m.Error != null)),
             };
             foreach (var (key, n) in defs)
             {
@@ -1672,6 +1704,91 @@ namespace QuickDeploy
             if (finds.Managers.Count > 0 || finds.Loose.Count > 0) ImportFromManagers(false, finds, r.Out);
         }
 
+        /// <summary>The menu at the list's title: the profiles (one is in use), the mod library,
+        /// then making, renaming and deleting profiles (the user, 2026-10-25).</summary>
+        void Profile_Click(object sender, RoutedEventArgs e)
+        {
+            if (JustClosed(ProfileBtn) || st == null) return;
+            var menu = new ContextMenu { PlacementTarget = ProfileBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+            foreach (var name in st.Profiles)
+            {
+                var it = new MenuItem { Header = ProfileName(name), IsChecked = !viewLibrary && name == st.Profile };
+                var to = name;
+                it.Click += async (s, e2) =>
+                {
+                    viewLibrary = false;
+                    if (to != st.Profile) await Exec("profile-use", to);
+                    Refresh();
+                };
+                menu.Items.Add(it);
+            }
+            menu.Items.Add(new Separator());
+            var lib = new MenuItem { Header = Texts.F("pf_library_n", st.Mods.Count), IsChecked = viewLibrary };
+            lib.Click += (s, e2) => { viewLibrary = true; RenderNav(); RenderList(); RenderDetail(); };
+            menu.Items.Add(lib);
+            menu.Items.Add(new Separator());
+            var make = new MenuItem { Header = Texts.Get("pf_new") };
+            make.Click += async (s, e2) =>
+            {
+                var name = Dialog.AskText(this, Texts.Get("pf_new_ask"), Texts.Get("ok"), "");
+                if (string.IsNullOrWhiteSpace(name)) return;
+                int how = Dialog.Choose(this, Texts.F("pf_new_how", name.Trim()), Texts.Get("pf_copy"), Texts.Get("pf_empty"), Texts.Get("cancel"));
+                if (how != 0 && how != 1) return;
+                var r = await Exec(how == 1 ? new[] { "profile-new", name.Trim(), "--empty" } : new[] { "profile-new", name.Trim() });
+                if (!r.Ok) { Dialog.Tell(this, Texts.F("failed", r.Message)); return; }
+                viewLibrary = false;
+                await Exec("profile-use", name.Trim());
+                Refresh();
+            };
+            menu.Items.Add(make);
+            var rename = new MenuItem { Header = Texts.F("pf_rename", ProfileName(st.Profile)) };
+            rename.Click += async (s, e2) =>
+            {
+                var was = st.Profile;
+                var name = Dialog.AskText(this, Texts.Get("pf_rename_ask"), Texts.Get("ok"), ProfileName(was));
+                if (string.IsNullOrWhiteSpace(name) || name.Trim() == ProfileName(was)) return;
+                var r = await Exec("profile-rename", was, name.Trim());
+                if (!r.Ok) Dialog.Tell(this, Texts.F("failed", r.Message));
+                Refresh();
+            };
+            menu.Items.Add(rename);
+            var others = st.Profiles.Where(p => p != st.Profile).ToList();
+            var drop = new MenuItem { Header = Texts.Get("pf_delete"), IsEnabled = others.Count > 0 };
+            drop.Click += async (s, e2) =>
+            {
+                var pick = Dialog.Ticks(this, Texts.Get("pf_delete_ask"), others.Select(ProfileName).ToArray(), Texts.Get("delete_btn"), false);
+                if (pick == null) return;
+                for (int i = 0; i < others.Count; i++)
+                    if (pick[i]) await Exec("profile-delete", others[i]);
+                Refresh();
+            };
+            menu.Items.Add(drop);
+            Dismissable(menu);
+            menu.IsOpen = true;
+        }
+
+        /// <summary>The row menu's way in and out of the profile in use, for the mods taken.</summary>
+        void ProfileItems(ContextMenu menu, List<ModRow> mods)
+        {
+            if (st == null || !st.ProfilesOn || mods.Count == 0) return;
+            var name = ProfileName(st.Profile);
+            var outside = mods.Where(x => !x.InProfile).ToList();
+            var inside = mods.Where(x => x.InProfile).ToList();
+            if (outside.Count > 0)
+            {
+                var add = new MenuItem { Header = outside.Count == 1 ? Texts.F("pf_add", name) : Texts.F("pf_add_n", name, outside.Count) };
+                add.Click += (s, e) => Run(new[] { "profile-add" }.Concat(outside.Select(x => x.Id)).ToArray());
+                menu.Items.Add(add);
+            }
+            if (inside.Count > 0)
+            {
+                var take = new MenuItem { Header = inside.Count == 1 ? Texts.F("pf_remove", name) : Texts.F("pf_remove_n", name, inside.Count) };
+                take.Click += (s, e) => Run(new[] { "profile-remove" }.Concat(inside.Select(x => x.Id)).ToArray());
+                menu.Items.Add(take);
+            }
+            menu.Items.Add(new Separator());
+        }
+
         /// <summary>The game folder on the Storage page: where it is, whether Helldivers 2 is
         /// really there, and changing it, by hand or found in the Steam libraries (the user,
         /// 2026-10-25: changed here, not in the deploy target card).</summary>
@@ -2005,6 +2122,22 @@ namespace QuickDeploy
         {
             if (dragRow != null) EndDrag(false);         // the rows are about to be built again
             ListTitle.Text = filter == "all" ? Texts.Get("t_all") : Texts.Get("f_" + filter);
+            bool profiled = st.ProfilesOn;
+            if (!profiled) viewLibrary = false;
+            ListTitle.Visibility = profiled ? Visibility.Collapsed : Visibility.Visible;
+            ProfileBtn.Visibility = profiled ? Visibility.Visible : Visibility.Collapsed;
+            if (profiled)
+            {
+                var head = new StackPanel { Orientation = Orientation.Horizontal };
+                head.Children.Add(new TextBlock { Text = viewLibrary ? Texts.Get("pf_library") : ProfileName(st.Profile), FontSize = 28, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
+                head.Children.Add(new Path
+                {
+                    Data = Geometry.Parse("M0,0 L7,7 L14,0"), Stroke = B("Yellow"), StrokeThickness = 2.2,
+                    Margin = new Thickness(12, 4, 0, 0), VerticalAlignment = VerticalAlignment.Center,
+                });
+                ProfileBtn.Template = Plain();
+                ProfileBtn.Content = head;
+            }
             // a row is built again only when what it shows changed; the others stay put
             var want = new List<UIElement>();
             var seen = new HashSet<string>();
@@ -2042,6 +2175,7 @@ namespace QuickDeploy
             var sb = new System.Text.StringBuilder();
             void Add(object x) => sb.Append(x).Append('\u001f');
             Add(m.Id == selectedId); Add(picked.Contains(m.Id)); Add(open.Contains(m.Id)); Add(filter == "all");
+            Add(m.InProfile); Add(viewLibrary); Add(st.Profile);
             Add(m.Index); Add(m.Name); Add(m.Path); Add(m.Enabled); Add(m.Icon); Add(m.Status); Add(m.Error); Add(m.Lua); Add(m.Loader); Add(string.Join(",", m.Tags)); Add(HasUpdate(m)); Add(m.ShownVersion); Add(m.VersionFrom);
             Add(Checked(m)?.Status); Add(checkingOne.Contains(m.Id)); Add(checking); Add(updated.Contains(m.Id));
             Add(m.Files.Count); Add(m.DeployBytes); Add(m.LibraryBytes); Add(m.Changes); Add(m.Conflicts); Add(m.Shared); Add(m.Chosen); Add(m.Choices);
@@ -2059,7 +2193,7 @@ namespace QuickDeploy
             bool cur = m.Id == selectedId, isOpen = open.Contains(m.Id), alsoTaken = picked.Contains(m.Id);
             var item = new Border
             {
-                BorderBrush = B("Grid"), BorderThickness = new Thickness(0, 0, 0, 1), Tag = m, AllowDrop = filter == "all",
+                BorderBrush = B("Grid"), BorderThickness = new Thickness(0, 0, 0, 1), Tag = m, AllowDrop = filter == "all" && !viewLibrary,
                 Background = cur || alsoTaken ? B("Ground900") : Brushes.Transparent,
             };
             var edge = new Border
@@ -2076,7 +2210,8 @@ namespace QuickDeploy
             var line = new DockPanel { Margin = new Thickness(4, 8, 16, 8) };
             col.Children.Add(line);
             // the load order's number
-            var num = new TextBlock { Text = m.Index.ToString(), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), Width = 28, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
+            // a mod outside the profile in use has no place in its load order
+            var num = new TextBlock { Text = st.ProfilesOn && !m.InProfile ? "" : m.Index.ToString(), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), Width = 28, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
             DockPanel.SetDock(num, Dock.Left);
             line.Children.Add(num);
             // open / close
@@ -2094,8 +2229,12 @@ namespace QuickDeploy
             sw.Click += (s, e) =>
             {
                 bool on = sw.IsChecked == true;
+                // turned on from the library: it goes into the profile in use, on
+                if (on && st.ProfilesOn && !m.InProfile) { Run("profile-add", m.Id); return; }
                 Change(m.Id, c => c.Enabled = on, on ? "enable" : "disable", m.Id);
             };
+            // outside the profile in use (the library on show): faint, its switch says it is off
+            if (st.ProfilesOn && !m.InProfile) { item.Opacity = 0.55; sw.ToolTip = Texts.Get("pf_outside"); }
             DockPanel.SetDock(sw, Dock.Left);
             line.Children.Add(sw);
             switches[m.Id] = sw;
@@ -2233,8 +2372,8 @@ namespace QuickDeploy
 
             if (isOpen) col.Children.Add(Options(m));
 
-            // dragging changes the load order (in the full list only)
-            if (filter == "all")
+            // dragging changes the load order (in the full list only, not the library's)
+            if (filter == "all" && !viewLibrary)
             {
                 item.PreviewMouseLeftButtonDown += (s, e) => { dragStart = e.GetPosition(ListArea); dragFrom = m; };
                 item.PreviewMouseMove += (s, e) =>
@@ -2624,7 +2763,8 @@ namespace QuickDeploy
                 Grid.SetColumn(v, 1);
                 facts.Children.Add(v);
             }
-            Fact("d_order", Texts.F("d_order_v", m.Index, st.Mods.Count), true);
+            if (st.ProfilesOn && !m.InProfile) Fact("d_order", Texts.Get("pf_outside"));
+            else Fact("d_order", Texts.F("d_order_v", m.Index, st.ProfilesOn ? st.Mods.Count(x => x.InProfile) : st.Mods.Count), true);
             Fact("d_opts", m.Options.Count > 0 ? m.Chosen + " / " + m.Choices : "—");
             Fact("d_files", Texts.N(m.Files.Count), true);
             Fact("d_folder", m.Path, true);
@@ -2910,6 +3050,7 @@ namespace QuickDeploy
                 // ends of the load order
                 List<string[]> First() => Enumerable.Reverse(many).Select(x => new[] { "move", x.Id, "--top" }).ToList();
                 List<string[]> Last() => many.Select(x => new[] { "move", x.Id, "--bottom" }).ToList();
+                ProfileItems(menu, many);
                 var up = new MenuItem { Header = Texts.F("many_top", many.Count) };
                 up.Click += (s, e) => RunMany(Texts.TopWins ? Last() : First());
                 menu.Items.Add(up);
@@ -2936,6 +3077,7 @@ namespace QuickDeploy
             // only what this menu alone can do: opening the folder, matching the source,
             // removing and deleting are all on the mod's own page (the user, 2026-10-24:
             // the menu had grown too long)
+            ProfileItems(menu, Taken(m));
             Item("rename", () => RenameMod(m));
             menu.Items.Add(TagMenu(m));
             // the top and bottom of the screen, as the list is shown
@@ -4191,6 +4333,21 @@ namespace QuickDeploy
             pair.Children.Add(en);
             langs.Child = pair;
             body.Children.Add(langs);
+
+            // profiles: a switch of their own (the user, 2026-10-25)
+            body.Children.Add(Label("set_profiles", new Thickness(0, 20, 0, 6)));
+            var pfSw = new CheckBox { Style = (Style)FindResource("Switch"), IsChecked = st?.ProfilesOn == true, VerticalAlignment = VerticalAlignment.Center };
+            var pfLine = new StackPanel { Orientation = Orientation.Horizontal };
+            pfLine.Children.Add(pfSw);
+            pfLine.Children.Add(new TextBlock { Text = Texts.Get("set_profiles_on"), Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) });
+            pfSw.Click += async (s, e2) =>
+            {
+                viewLibrary = false;
+                await Exec(pfSw.IsChecked == true ? "profiles-on" : "profiles-off");
+                Refresh();
+            };
+            body.Children.Add(pfLine);
+            body.Children.Add(Small(Texts.Get("set_profiles_note"), new Thickness(0, 8, 0, 0)));
 
             // which way the list is shown: the winner at the bottom (the load order as it is) or at the top
             body.Children.Add(Label("set_order", new Thickness(0, 20, 0, 6)));

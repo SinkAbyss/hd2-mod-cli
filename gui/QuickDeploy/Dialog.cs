@@ -47,7 +47,7 @@ namespace QuickDeploy
         }
 
         /// <summary>A list to tick (all ticked at first): which were ticked, or null when cancelled.</summary>
-        public static bool[] Ticks(Window owner, string text, string[] items, string action)
+        public static bool[] Ticks(Window owner, string text, string[] items, string action, bool ticked = true)
         {
             var w = Frame(owner, text, out var body);
             // the window's own ticks, not Windows' box (the user, 2026-10-25)
@@ -55,7 +55,7 @@ namespace QuickDeploy
             {
                 Style = (Style)Application.Current.Resources["Tick"],
                 Content = new TextBlock { Text = x, TextWrapping = TextWrapping.Wrap, Foreground = B("Ink"), FontSize = 14 },
-                IsChecked = true, Margin = new Thickness(0, 10, 0, 0),
+                IsChecked = ticked, Margin = new Thickness(0, 10, 0, 0),
             }).ToList();
             foreach (var b in boxes) body.Children.Add(b);
             bool ok = false;

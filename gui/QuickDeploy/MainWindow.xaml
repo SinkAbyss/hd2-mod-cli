@@ -111,6 +111,9 @@
             </StackPanel>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,4,0,0">
               <TextBlock x:Name="ListTitle" FontSize="28" FontWeight="Bold" VerticalAlignment="Center"/>
+              <!-- with profiles on, the title is the profile in use, and opens the profiles -->
+              <Button x:Name="ProfileBtn" Visibility="Collapsed" Cursor="Hand" FocusVisualStyle="{x:Null}"
+                      VerticalAlignment="Center" Click="Profile_Click"/>
               <!-- to the top of the list and to the end of it: new mods are at the end -->
               <Button x:Name="TopBtn" Width="34" Height="34" Margin="16,0,0,4.5" VerticalAlignment="Center" Click="Top_Click"/>
               <Button x:Name="BottomBtn" Width="34" Height="34" Margin="2,0,0,4.5" VerticalAlignment="Center" Click="Bottom_Click"/>
