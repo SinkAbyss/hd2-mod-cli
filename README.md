@@ -152,13 +152,14 @@ Storage page, and handles each choice:
 
 ### Update checks
 
-**Check for updates** (above the list) checks every mod that came from a GitHub
-repository:
+**Check for updates** (above the list) checks every mod on the channel it came
+from:
 
 | Source | How it is checked | How it is updated |
 |---|---|---|
 | GitHub | The repository's latest release. | **Update** downloads the release's zip, 7z or rar. |
-| Nexus Mods, another site | Not checked. | **Open page**. |
+| Nexus Mods | Only in the official build. | Only in the official build. |
+| Another site | Not checked. | **Open page**. |
 
 - The source is recorded when a mod arrives: a file downloaded with a browser
   (Windows keeps the address it came from), or HD2 Arsenal's records for the
@@ -397,12 +398,13 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 ### 检查更新
 
-点击列表上方的 **检查更新**，程序将检查来自 GitHub 仓库的 mod 是否有新版本：
+点击列表上方的 **检查更新**，程序将按各 mod 的来源渠道检查新版本：
 
 | 来源 | 检查方式 | 更新方式 |
 |---|---|---|
 | GitHub | 仓库的最新发布版本（Release）。 | 点击 **更新** 下载该版本的 zip、7z 或 rar。 |
-| Nexus Mods、其他网站 | 不检查。 | 点击 **打开页面** 查看。 |
+| Nexus Mods | 仅在正式版提供。 | 仅在正式版提供。 |
+| 其他网站 | 不检查。 | 点击 **打开页面** 查看。 |
 
 - mod 的来源在加入时自动记录：用浏览器下载的文件（Windows 会保存下载地址），以及 HD2 Arsenal 为其安装的 mod 保存的记录。
 - 未记录来源的 mod，可在详情中点击 **设置来源…**，填写该 mod 的 Nexus Mods 页面或 GitHub 仓库地址。

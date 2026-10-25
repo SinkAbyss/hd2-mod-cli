@@ -447,6 +447,15 @@ namespace QuickDeploy
                 g.Start();
                 return;
             }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "listtop")
+            {
+                // "listtop": the list scrolled back to its top after the start, for the README's
+                // picture (--select opens a mod and scrolls it to the top of the list)
+                var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                g.Tick += (s, e) => { g.Stop(); ListScroll.ScrollToVerticalOffset(0); };
+                g.Start();
+                return;
+            }
             if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "topwins")
             {
                 // "topwins": the list shown with the winner at the top. Writes down the rows' order,
