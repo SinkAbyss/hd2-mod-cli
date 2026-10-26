@@ -100,7 +100,10 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 3. If your library is empty, it lists the mod managers found on this computer
    (HD2 Arsenal, HD2ModManager, Echelon) and offers to import their lists: the mods,
    their order, on/off and options. Their files are only read, and a mod found
-   in more than one is imported once.
+   in more than one is imported once. HD2 Arsenal's list is read in its earlier
+   shape and in the one of 0.37 (the mods kept once, the profiles naming them).
+   A list that is found but cannot be read is said, with where it is; it is never
+   left out as if there were none.
 4. Mods that are on another drive than the game are pointed out, with what
    moving them gives (see *Mod folders*). Nothing is moved unless you choose to.
 
@@ -108,12 +111,12 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 
 | Part | What it shows and does |
 |---|---|
-| Title bar | How many mods, how many are on, how many changes wait for a deploy; **Deploy / Storage / Labels** to switch pages; a gear for the settings (the language, whether the mod that wins is shown at the bottom of the list or at the top, whether the lines that explain things are shown, this program's updates, who made it and where it comes from); a red dot on the gear when a newer version of this program is out; the hard-linked files in the game. |
+| Title bar | How many mods, how many are on, how many changes wait for a deploy; **Deploy / Storage / Labels** to switch pages; a gear for the settings (the language, whether the mod that wins is shown at the bottom of the list or at the top, whether the lines that explain things are shown, the jump button for a fast wheel, this program's updates, who made it and where it comes from); a red dot on the gear when a newer version of this program is out; the hard-linked files in the game. |
 | Library (left) | Filters: all mods, those with changes to deploy, Lua mods, off, with conflicts, any that cannot be read, and the ones whose scripts **will not run**. |
 | Deploy target (left) | The library and game folders, and whether they share a drive (hard links) or not (copies). **Change…** picks another game folder. When the game holds copies that could be hard links, **Make hard links** frees their space without writing anything. |
 | Filter (left of the search box) | Narrows the list to your own labels: a mod shows when it carries any of the labels ticked. Alt+click a label to hide the mods that carry it. |
-| Search (above the list) | Finds mods by any word in their metadata, not only the name: the author's description, options and their descriptions, folders, patch file names (archive ids), Nexus mod ids, *lua*, *loader*, and your own labels. Several words: all must match. |
-| Mod list (middle) | The load order, top to bottom: **a mod lower in the list wins**. Each row: its number, its switch, its picture, its name, and under the name its version, what is chosen, a **LUA** tag when it runs scripts in the game and a **LOADER** tag when it replaces one of the game's own scripts the way a mod loader does; on the right a mark that checks this one mod for updates, its size and how it is deployed. Dropping a zip or a mod folder on the list installs it. Double-click a mod to give it a name of your own (the name it came with stays in its details); Ctrl or Shift takes several mods at once: drag one of them and they all move together, in the order they have; the right button turns them all on or off, moves them, removes them or deletes them from the disk. |
+| Search (above the list) | Finds mods by any word in their metadata, not only the name: the author's description, options and their descriptions, folders, patch file names (archive ids), Nexus mod ids, *lua*, *loader*, and your own labels. Several words: all must match. There is no need to click it first: typing on the list goes to it. |
+| Mod list (middle) | The load order, top to bottom: **a mod lower in the list wins**. Each row: its number, its switch, its picture, its name, and under the name its version, what is chosen, a **LUA** tag when it runs scripts in the game and a **LOADER** tag when it replaces one of the game's own scripts the way a mod loader does; on the right a mark that checks this one mod for updates, its size and how it is deployed. Dropping a zip or a mod folder on the list installs it. Turning the wheel fast shows **To the top** or **To the end** beside the pointer (a setting, on by default). Double-click a mod to give it a name of your own (the name it came with stays in its details); Ctrl or Shift takes several mods at once: drag one of them and they all move together, in the order they have; the right button turns them all on or off, moves them, removes them or deletes them from the disk. |
 | Options (open a row with its arrow) | A mod's options as cards with their pictures, names and descriptions. A group is *pick one* (Ctrl+click for more); parts can each be on or off. |
 | Labels page | Your own labels for mods, with how many mods carry each one: make one, rename it, delete it, and tick the mods that carry it. |
 | Details (right) | The author's description (or, when the mod folder has none, what its site says), the load order, the folder, **Delete** (red), **Remove** and **Open folder**; what the next deploy does to this mod (kept, renamed, new), its conflicts with other mods (each resource by its type, and by its name when HD2SDK is installed, e.g. "Model · Laser Sight W/ Flashlight"), the resources another mod ships byte for byte alike (shared, not fought over), and its source: **Match the source** asks the site what the mod is called and fills in its name, version, author, description and picture. |
@@ -122,7 +125,10 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 ### Everyday use
 
 1. **Add a mod**: drop its zip or folder on the list, or *Add mod…* → a zip or
-   a folder. It goes to the bottom of the list, so it wins over the others.
+   a folder. It goes to the bottom of the list, so it wins over the others. A
+   folder that holds several mods, each in a folder of its own (another
+   manager's mod folder), is offered as a library folder instead of being taken
+   as one mod.
 2. **Turn it on or off** with its switch, and **choose its options** on its
    cards. Every click shows at once; the window works it out in the background.
 3. **Change the load order** by dragging a row (or several taken together).
@@ -167,6 +173,20 @@ their size, and whether it is on the game's drive.
   that manager's list, so their order, on/off and options come too; any other
   mod folder in it is offered as it stands. Mods already in the library are
   never added twice.
+- **Another manager's mod folder comes in only through its list**, since the
+  order, the switches and the options are kept there. The folder is recognised
+  by the marks each manager leaves on its mod folders:
+
+  | Manager | Its mod folders | Its list |
+  |---|---|---|
+  | HD2 Arsenal | Names ending in `_AR` and six digits | `%LOCALAPPDATA%\hd2arsenal\hd2a_data.json` |
+  | HD2ModManager | A `manifest.json` with a Guid in each, some written by it for the mods it imported | `enabled.json` beside its `Mods` folder |
+  | Echelon | Names ending in ` (` and twelve hex digits `)`, the files in numbered set folders | `%APPDATA%\Echelon\library.json` |
+
+  When the list is not where that manager keeps it, or lists none of the
+  folder's mods, the window says whose folder it is and asks for the file;
+  nothing is added loose. When the list is found and cannot be read, it says
+  that instead.
 - **Change path…**: a folder you moved yourself, or one on a drive that got
   another letter. The mods in it follow it; nothing on disk is moved.
 - Folders that mods are in are listed by themselves (HD2 Arsenal's, HD2ModManager's, Echelon's).
@@ -270,7 +290,7 @@ A change made on the command line shows in an open window half a second later.
 | `init [--game DIR] [--mods-dir DIR]` | Set the game folder (found automatically when left out; the game folder, its `data` or its `bin`) and where zips are unpacked. |
 | `import-arsenal [--file F] [--profile ID \| --profiles] [--replace]` | Add HD2 Arsenal's deployed profile to the library: names, folders, order, on/off, options; mods already in it are skipped (`--replace`: the library becomes HD2 Arsenal's). Mods stay in HD2 Arsenal's folders. `--profiles`: every profile, each a profile here with its own mods, order, on/off and options; the profile in use stays in use. |
 | `list [--files] [--paths]` | The load order, top to bottom. The last one wins. `--files` shows each mod's patch files as they would be numbered. |
-| `add PATH [--name N] [--copy]` | Add a mod at the bottom: a zip (unpacked once into the library folder) or a folder (used where it is, so a mod you are building can be deployed straight from its build folder). |
+| `add PATH [--name N] [--copy] [--whole]` | Add a mod at the bottom: a zip (unpacked once into the library folder) or a folder (used where it is, so a mod you are building can be deployed straight from its build folder). A folder of several mods is refused as a library folder (`folder-add`); `--whole` takes it as one mod all the same. |
 | `replace MOD PATH` | A new version of a mod: same place in the order, the same options by name. |
 | `remove MOD` | Take a mod out of the library; its files stay. |
 | `check-updates` | Check every mod from GitHub for a newer release. |
@@ -280,7 +300,7 @@ A change made on the command line shows in an open window half a second later.
 | `import-hd2mm [--dir DIR] [--replace]` | Add HD2ModManager's mods, order, on/off and options to the library (read only; its folder-name and object options both). |
 | `import-echelon [--file FILE] [--profiles] [--replace]` | Add Echelon's mods, on/off and options from its own library.json, in its active profile's order (read only). `--profiles`: every profile, each with its own mods, order and on/off; the option choices are the active profile's, the only ones Echelon's files hold. |
 | `folders` | The mod folders: the default, the ones added, and the folders mods are in, with their drives. |
-| `folder-add PATH [--import]` / `folder-remove PATH` / `folder-default PATH` | Add a library folder and say which other managers' lists and which other mods it holds (`--import` brings them in), take one off the list (its files stay), choose the default. |
+| `folder-add PATH [--import]` / `folder-remove PATH` / `folder-default PATH` | Add a library folder and say which other managers' lists and which other mods it holds (`--import` brings them in), take one off the list (its files stay), choose the default. Another manager's mod folder whose list is not found names the list to give with `import-… --file` (`--dir` for HD2ModManager). |
 | `folder-path PATH NEW` / `add-loose PATH` | A library folder is somewhere else now: it and its mods follow. Add the mod folders in a library folder that no manager lists, where they are. |
 | `relocate MOD... --into FOLDER [--keep]` | Move mods into another mod folder (`--keep`: copy, the old folders stay); the game's copies of them become hard links. |
 | `delete MOD... --yes` | Delete mods from the disk for good: out of the library and the game (one deploy), their folders deleted. |
@@ -431,7 +451,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 1. 打开 `HD2 Mod Quick Deploy.exe`。
 2. 程序会自动查找游戏目录（依据 HD2 Arsenal 的设置或 Steam 的库列表）；未找到时会提示选择，可选择游戏目录本身或其中的 `data`、`bin` 文件夹。
-3. mod 库为空时，程序列出在本机找到的 mod 管理器（HD2 Arsenal、HD2ModManager、Echelon），询问是否导入其列表（mod、加载顺序、开关、可选内容）。导入仅读取其文件；同一个 mod 只导入一次。
+3. mod 库为空时，程序列出在本机找到的 mod 管理器（HD2 Arsenal、HD2ModManager、Echelon），询问是否导入其列表（mod、加载顺序、开关、可选内容）。导入仅读取其文件；同一个 mod 只导入一次。HD2 Arsenal 的列表可读取旧格式和 0.37 的格式（mod 统一保存一份，配置档案按编号引用）。找到了配置文件却无法读取时，会说明情况和文件位置，不会当作没有找到。
 4. 与游戏不在同一分区的 mod 会被提示，并说明移动的好处（见“MOD 库文件夹”）。未经选择不会移动任何文件。
 5. 首次启动时会提示：安装 mod 无需先清空。
 
@@ -439,12 +459,12 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 | 位置 | 内容与功能 |
 |---|---|
-| 标题栏 | mod 数、启用数、待部署的变更数；**部署 / 存储 / 标签** 切换页面；齿轮按钮打开设置（界面语言、列表中优先的 mod 显示在下方还是上方、是否显示说明文字、本程序的更新、作者与项目地址），有新版本时齿轮右上角显示红点；游戏目录中的硬链接文件 |
+| 标题栏 | mod 数、启用数、待部署的变更数；**部署 / 存储 / 标签** 切换页面；齿轮按钮打开设置（界面语言、列表中优先的 mod 显示在下方还是上方、是否显示说明文字、快速滚动时的跳转按钮、本程序的更新、作者与项目地址），有新版本时齿轮右上角显示红点；游戏目录中的硬链接文件 |
 | 左侧 · MOD 库 | 筛选：全部、待部署、Lua mod、已停用、冲突、读取出错，以及脚本**不会运行**的 mod |
 | 左侧 · 部署目标 | mod 库与游戏目录，以及二者是否位于同一分区（硬链接）或不同分区（复制）。**更改…** 用于更换游戏目录；游戏目录中存在可改为硬链接的复制件时，**改为硬链接** 可在不写入数据的情况下释放空间。卡片底部为 **恢复原版** |
 | 筛选（搜索框左侧） | 按自己贴的标签过滤：mod 带有任一所选标签即显示。按住 Alt 键点击标签，可隐藏带有该标签的 MOD |
-| 搜索（列表上方） | 按元数据中的任意词查找 mod，不限于名称：作者说明、可选内容及其说明、文件夹、patch 文件名（档案编号）、Nexus 编号、*lua*。输入多个词时须全部匹配 |
-| 中间 · mod 列表 | 加载顺序自上而下，**越靠下优先级越高**。每行显示：序号、开关、图片、名称，名称下方为版本、已选内容、**LUA** 标签（会在游戏中运行脚本的 mod）与 **LOADER** 标签（替换了游戏自带脚本、相当于自带加载器的 mod）；右侧为单独检查该 mod 更新的图标、大小与部署方式。将 zip 压缩包或 mod 文件夹拖到列表上即可安装。双击 mod 可自定义名称（原名保留在详情中）；按住 Ctrl 或 Shift 可多选：拖动其中一个，选中的 mod 会按原有顺序一起移动；右键可一起启用、停用、移动、移除或从硬盘删除 |
+| 搜索（列表上方） | 按元数据中的任意词查找 mod，不限于名称：作者说明、可选内容及其说明、文件夹、patch 文件名（档案编号）、Nexus 编号、*lua*。输入多个词时须全部匹配。无需先点击搜索框：在列表上直接输入即可 |
+| 中间 · mod 列表 | 加载顺序自上而下，**越靠下优先级越高**。每行显示：序号、开关、图片、名称，名称下方为版本、已选内容、**LUA** 标签（会在游戏中运行脚本的 mod）与 **LOADER** 标签（替换了游戏自带脚本、相当于自带加载器的 mod）；右侧为单独检查该 mod 更新的图标、大小与部署方式。将 zip 压缩包或 mod 文件夹拖到列表上即可安装。快速转动滚轮时，指针旁会出现 **回到顶部** 或 **跳到底部**（可在设置中关闭，默认开启）。双击 mod 可自定义名称（原名保留在详情中）；按住 Ctrl 或 Shift 可多选：拖动其中一个，选中的 mod 会按原有顺序一起移动；右键可一起启用、停用、移动、移除或从硬盘删除 |
 | 可选内容（点击行左侧箭头展开） | 以卡片显示图片、名称和作者说明。一组内为单选（Ctrl+点击可多选）；附加内容可分别开关 |
 | 标签页 | 自己给 mod 贴的标签，显示每个标签上有多少 mod：新建、重命名、删除，并勾选属于该标签的 mod |
 | 右侧 · 详情 | 作者说明（mod 文件夹中没有说明时，显示来源网站的说明）、加载顺序、文件夹，以及 **删除**（红色外框）、**移除**、**打开文件夹**；下次部署对该 mod 的处理（保留、重命名、新增），与其他 mod 的资源冲突（逐项列出资源类型；安装了 HD2SDK 时还会显示名称，如“模型 · Laser Sight W/ Flashlight”），以及与其他 mod 内容完全相同的资源（属于共用，不算冲突），以及来源：点击 **匹配来源信息** 可从网站取回该 mod 的名称、版本、作者、说明和图片 |
@@ -452,7 +472,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 ### 日常使用
 
-1. **添加 MOD**：将 zip 压缩包或 mod 文件夹拖到列表上，或点击“添加 mod…”选择 zip 或文件夹。新 mod 位于列表底部，优先级最高。
+1. **添加 MOD**：将 zip 压缩包或 mod 文件夹拖到列表上，或点击“添加 mod…”选择 zip 或文件夹。新 mod 位于列表底部，优先级最高。如果文件夹中有多个 mod、各占一个子文件夹（例如其他管理器存放 mod 的文件夹），会提示作为 MOD 库文件夹加入，而不会当作一个 mod。
 2. **启用或停用 MOD、选择可选内容**：点击开关或卡片。界面立即更新，计算在后台完成。
 3. **调整加载顺序**：拖动行（多选后可一起拖动）。
 4. **部署**：底部显示保留、重命名、新增、删除的文件数及用时。
@@ -470,6 +490,15 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 - **游戏目录**（最上方）：显示游戏位置，以及该位置是否确为 Helldivers 2。“更改…”可手动选择；“自动识别”会在本机的 Steam 库中查找。
 - **默认文件夹**：添加的 zip 放入此处。“设为默认”可更换默认文件夹；“从列表移除”仅将添加的文件夹移出列表，其中的文件保留。
 - **添加库文件夹…**：添加文件夹后，像 Steam 识别游戏库文件夹一样检查其中内容。其他管理器存放在此的 mod（HD2 Arsenal、HD2ModManager——即使其存储目录已更改——以及 Echelon）会按该管理器的列表导入，加载顺序、开关与可选内容一并保留；其他 mod 文件夹则原地加入。库中已有的 mod 不会重复加入。
+- **其他管理器存放 mod 的文件夹只按其配置文件导入**，因为加载顺序、开关和可选内容都记录在配置文件中。程序依据各管理器在 mod 文件夹上留下的特征来识别：
+
+  | 管理器 | mod 文件夹的特征 | 配置文件 |
+  |---|---|---|
+  | HD2 Arsenal | 文件夹名以 `_AR` 加 6 位数字结尾 | `%LOCALAPPDATA%\hd2arsenal\hd2a_data.json` |
+  | HD2ModManager | 每个 mod 都有带 Guid 的 `manifest.json`，其中有些是它为导入的 mod 生成的 | 其 `Mods` 文件夹旁的 `enabled.json` |
+  | Echelon | 文件夹名以“空格（12 位十六进制）”结尾，文件放在编号文件夹中 | `%APPDATA%\Echelon\library.json` |
+
+  配置文件不在该管理器通常保存的位置、或其中没有记录此文件夹的 mod 时，程序会说明这是哪个管理器的文件夹，并请你选择配置文件，不会散装加入。找到了配置文件但无法读取时，则说明这一情况。
 - **更改路径…**：文件夹被手动移动，或所在分区的盘符改变时使用。其中的 mod 会随之指向新位置，磁盘上的文件不做移动。
 - 含有 mod 的文件夹会自动列出（如 HD2 Arsenal、HD2ModManager、Echelon 的文件夹）。
 - **删除 MOD**：选择文件夹，勾选其中的 mod（默认按大小排列），点击“删除…”：文件夹将被删除，这些 mod 也会从 mod 库与游戏中移除。
