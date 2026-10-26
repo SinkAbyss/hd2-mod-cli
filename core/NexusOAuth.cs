@@ -24,9 +24,12 @@ namespace Hd2Mod
         /// <summary>The client id Nexus Mods issued for this build's application, which the build
         /// takes from nexus_client_id.txt beside build.bat (not in the repository: a build anyone else
         /// makes registers its own application with Nexus Mods). Null without one: no sign-in.
-        /// HD2QD_NEXUS_CLIENT_ID names another, for trying the flow.</summary>
-        public static string ClientId =>
-            Environment.GetEnvironmentVariable("HD2QD_NEXUS_CLIENT_ID") is string s && s.Length > 0 ? s : Built;
+        /// Nothing at run time can give it another (no setting, no environment variable): a build
+        /// without one cannot sign in (the user, 2026-10-27).</summary>
+        public static string ClientId => ForTests ?? Built;
+
+        /// <summary>Tests only: a client id of the fake sign-in service's.</summary>
+        internal static string ForTests;
 
         static readonly string Built = typeof(NexusOAuth).Assembly
             .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)

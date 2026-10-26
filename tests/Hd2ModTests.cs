@@ -689,7 +689,7 @@ namespace Hd2Mod.Tests
         public void SignInWithPkce()
         {
             var keep = (NexusOAuth.PublicKeyPem, NexusOAuth.UsersBase, NexusOAuth.Port, NexusOAuth.Now);
-            Environment.SetEnvironmentVariable("HD2QD_NEXUS_CLIENT_ID", "test-client");
+            NexusOAuth.ForTests = "test-client";
             try
             {
                 NexusOAuth.PublicKeyPem = Spki(SigningKey.ExportParameters(false));
@@ -741,7 +741,7 @@ namespace Hd2Mod.Tests
             finally
             {
                 (NexusOAuth.PublicKeyPem, NexusOAuth.UsersBase, NexusOAuth.Port, NexusOAuth.Now) = keep;
-                Environment.SetEnvironmentVariable("HD2QD_NEXUS_CLIENT_ID", null);
+                NexusOAuth.ForTests = null;
             }
         }
 
