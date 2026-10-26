@@ -174,6 +174,16 @@ namespace QuickDeploy
             }
             groupCol = Math.Min(groupCol, groupPath.Count);
 
+            // where each column was scrolled to, kept through the redraw: a click redraws them all
+            // and every list went back to its top (the user, 2026-10-27)
+            // (columns drawn a moment ago and not scrolled back yet say 0: what was kept stands)
+            if (!restoring)
+            {
+                foreach (var old in GroupCols.Children.OfType<Border>())
+                    if (old.Tag is GroupDrop d && old.Child is ScrollViewer sv) colOffsets[d.Group ?? ""] = sv.VerticalOffset;
+                hadX = GroupScroll.HorizontalOffset;
+            }
+            int hadCols = GroupCols.ColumnDefinitions.Count;
             GroupCols.Children.Clear();
             GroupCols.ColumnDefinitions.Clear();
             var parents = new List<string> { null };
@@ -185,23 +195,25 @@ namespace QuickDeploy
                 var col = GroupColumn(i, parents[i], shown, under, Visible, narrowed, last);
                 Grid.SetColumn(col, i);
                 GroupCols.Children.Add(col);
-                if (last) lastGroupCol = col;
             }
-            FitLastColumn();
-            // the newest column in view, as Finder scrolls to it
-            Dispatcher.BeginInvoke(new Action(() => GroupScroll.ScrollToRightEnd()), System.Windows.Threading.DispatcherPriority.Loaded);
+            // sideways: a column just opened comes into view, as Finder scrolls to it; otherwise
+            // the strip stays where it was
+            restoring = true;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                restoring = false;
+                foreach (var c in GroupCols.Children.OfType<Border>())
+                    if (c.Tag is GroupDrop d && c.Child is ScrollViewer sv && colOffsets.TryGetValue(d.Group ?? "", out var y)) sv.ScrollToVerticalOffset(y);
+                if (parents.Count > hadCols) GroupScroll.ScrollToRightEnd();
+                else GroupScroll.ScrollToHorizontalOffset(hadX);
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
-        FrameworkElement lastGroupCol;
-
-        /// <summary>The last column takes the room the others leave, never less than one column:
-        /// a width of its own, so a long line in it cannot push the first column out of view.</summary>
-        void FitLastColumn()
-        {
-            if (lastGroupCol == null) return;
-            int n = GroupCols.ColumnDefinitions.Count;
-            lastGroupCol.Width = Math.Max(GroupColWidth, Math.Floor(GroupScroll.ViewportWidth) - (n - 1) * GroupColWidth);
-        }
+        // each column's scroll, by the group it shows ("" the top), and the strip's; restoring
+        // while the columns just drawn are not scrolled back yet
+        readonly Dictionary<string, double> colOffsets = new Dictionary<string, double>();
+        double hadX;
+        bool restoring;
 
         FrameworkElement GroupColumn(int index, string parent, List<ModRow> shown, Dictionary<string, List<ModRow>> under,
                                      Func<GroupRow, bool> visible, bool narrowed, bool last)
@@ -210,7 +222,9 @@ namespace QuickDeploy
             var list = new StackPanel { Margin = new Thickness(0, 6, 0, 12) };
             var col = new Border
             {
-                BorderBrush = B("Grid"), BorderThickness = new Thickness(0, 0, last ? 0 : 1, 0), Background = Brushes.Transparent,
+                // every column one width, the room after them empty, as Finder: the last one
+                // filling the rest jumped between narrow and wide (the user, 2026-10-27)
+                BorderBrush = B("Grid"), BorderThickness = new Thickness(0, 0, 1, 0), Background = Brushes.Transparent,
                 Tag = new GroupDrop { Group = parent },
                 Child = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false, Content = list },
             };
@@ -334,7 +348,7 @@ namespace QuickDeploy
 
         Border ModItem(ModRow m, int index, bool active)
         {
-            bool chosen = m.Id == selectedId && index == groupPath.Count;
+            bool chosen = (m.Id == selectedId || picked.Contains(m.Id)) && index == groupPath.Count;
             var item = ItemShell(chosen, active, null);
             var line = new DockPanel { MinHeight = 52, Margin = new Thickness(11, 6, 10, 6) };
             var sw = new CheckBox { Style = (Style)FindResource("Switch"), IsChecked = m.Enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0), ToolTip = m.Name };
@@ -389,15 +403,7 @@ namespace QuickDeploy
                 if (e.ClickCount == 2) { e.Handled = true; RenameMod(m); return; }
                 gDragFrom = ("mod", m.Id, m.Name, e.GetPosition(GroupScroll));
             };
-            var menu = Menu(m);
-            if (m.Group != null)
-            {
-                var outItem = new MenuItem { Header = Texts.Get("g_out") };
-                outItem.Click += (s, e) => Run(new[] { "group-put" }.Concat(Taken(m).Select(x => x.Id)).Concat(new[] { "--top" }).ToArray());
-                menu.Items.Insert(0, outItem);
-                menu.Items.Insert(1, new Separator());
-            }
-            item.ContextMenu = menu;
+            item.ContextMenu = Menu(m);
             return item;
         }
 
@@ -410,7 +416,81 @@ namespace QuickDeploy
                 it.Click += (s, e) => NewGroup(parent);
                 menu.Items.Add(it);
             }
+            // inside any group, at any level (the user, 2026-10-27)
+            var inside = GroupPicker(Texts.Get("g_new_inside"), null, g => g != null && LevelOf(g) < Groups.Depth, NewGroup, null, "g_new_here");
+            if (inside.Items.Count > 0) menu.Items.Add(inside);
             return menu.Items.Count > 0 ? menu : null;
+        }
+
+        /// <summary>The groups as a menu, one level per submenu: pick(group) for where to go (null:
+        /// the top), allowed(group) for where it may, current ticked. A group with groups inside
+        /// opens; its first line takes the group itself (the text hereKey, "{0}" its name).
+        /// make(parent), when given, adds "a new group here" to each level that may hold one.</summary>
+        MenuItem GroupPicker(string header, string current, Func<string, bool> allowed, Action<string> pick, Action<string> make, string hereKey, bool withTop = false)
+        {
+            var root = new MenuItem { Header = header };
+            MenuItem Leaf(string text, bool ticked, Action act)
+            {
+                var it = new MenuItem { Header = text, IsChecked = ticked, IsEnabled = act != null };
+                if (act != null) it.Click += (s, e) => act();
+                return it;
+            }
+            MenuItem Node(GroupRow g)
+            {
+                var kids = st.Groups.Where(x => x.Parent == g.Id).ToList();
+                bool may = allowed(g.Id);
+                bool canMake = make != null && LevelOf(g.Id) < Groups.Depth;
+                if (kids.Count == 0 && !canMake) return Leaf(g.Name, current == g.Id, may ? () => pick(g.Id) : (Action)null);
+                var mi = new MenuItem { Header = g.Name };
+                mi.Items.Add(Leaf(Texts.F(hereKey, g.Name), current == g.Id, may ? () => pick(g.Id) : (Action)null));
+                if (kids.Count > 0)
+                {
+                    mi.Items.Add(new Separator());
+                    foreach (var k in kids) mi.Items.Add(Node(k));
+                }
+                if (canMake)
+                {
+                    mi.Items.Add(new Separator());
+                    var add = new MenuItem { Header = Texts.F("g_new_in_named", g.Name) };
+                    add.Click += (s, e) => make(g.Id);
+                    mi.Items.Add(add);
+                }
+                return mi;
+            }
+            if (withTop) root.Items.Add(Leaf(Texts.Get("g_top_none"), current == null, allowed(null) ? () => pick(null) : (Action)null));
+            var tops = st.Groups.Where(g => g.Parent == null).ToList();
+            if (withTop && tops.Count > 0) root.Items.Add(new Separator());
+            foreach (var g in tops) root.Items.Add(Node(g));
+            if (make != null)
+            {
+                if (root.Items.Count > 0) root.Items.Add(new Separator());
+                var add = new MenuItem { Header = Texts.Get("g_new_and_put") };
+                add.Click += (s, e) => make(null);
+                root.Items.Add(add);
+            }
+            return root;
+        }
+
+        string PathText(string id) => string.Join("/", PathTo(id).Select(g => g.Name));
+
+        /// <summary>"Move to group" for mods (the ones taken with m): any group at any level, the
+        /// top, or a group made there and then.</summary>
+        MenuItem ModGroupMenu(List<ModRow> mods)
+        {
+            var ids = mods.Select(x => x.Id).ToList();
+            var groups = mods.Select(x => x.Group).Distinct().ToList();
+            // mods from several groups: none of them is ticked
+            string current = groups.Count == 1 ? groups[0] : "several";
+            void Put(string g) => Run(new[] { "group-put" }.Concat(ids).Concat(g == null ? new[] { "--top" } : new[] { "--in", g }).ToArray());
+            void MakeAndPut(string parent)
+            {
+                var name = Dialog.AskText(this, Texts.Get("g_rename_ask"), Texts.Get("g_create"), Texts.Get("g_new_name"))?.Trim();
+                if (string.IsNullOrEmpty(name)) return;
+                var made = parent == null ? new[] { "group-new", name } : new[] { "group-new", name, "--in", parent };
+                var path = parent == null ? name : PathText(parent) + "/" + name;
+                RunMany(new List<string[]> { made, new[] { "group-put" }.Concat(ids).Concat(new[] { "--in", path }).ToArray() });
+            }
+            return GroupPicker(Texts.Get("g_move_to"), current, g => true, Put, MakeAndPut, "g_put_here", true);
         }
 
         ContextMenu FolderMenu(GroupRow g)
@@ -422,6 +502,12 @@ namespace QuickDeploy
                 inner.Click += (s, e) => NewGroup(g.Id);
                 menu.Items.Add(inner);
             }
+            int below(string id) => st.Groups.Where(x => x.Parent == id).Select(x => 1 + below(x.Id)).DefaultIfEmpty(0).Max();
+            bool May(string into) => into != g.Id && !(into != null && PathTo(into).Any(x => x.Id == g.Id)) &&
+                                     (into == null ? 0 : LevelOf(into)) + 1 + below(g.Id) <= Groups.Depth;
+            menu.Items.Add(GroupPicker(Texts.Get("g_move_to"), g.Parent, May,
+                                       into => Run(into == null ? new[] { "group-move", g.Id, "--top" } : new[] { "group-move", g.Id, "--in", into }),
+                                       null, "g_put_here", true));
             var rename = new MenuItem { Header = Texts.Get("g_rename") };
             rename.Click += (s, e) => RenameGroup(g);
             menu.Items.Add(rename);
@@ -557,7 +643,6 @@ namespace QuickDeploy
             GroupScroll.LostMouseCapture += (s, e) => { if (gDragging) EndGroupDrag(); };
             PreviewKeyDown += (s, e) => { if (gDragging && e.Key == Key.Escape) { EndGroupDrag(); e.Handled = true; } };
             PreviewKeyDown += GroupKeys;
-            GroupScroll.SizeChanged += (s, e) => FitLastColumn();
         }
 
         string DragLabel()
@@ -596,8 +681,7 @@ namespace QuickDeploy
             if (b != null) { b.BorderBrush = B("Yellow"); b.BorderThickness = new Thickness(1); }
         }
 
-        Thickness TargetRest(Border b) =>
-            b.Child is ScrollViewer ? new Thickness(0, 0, Grid.GetColumn(b) == GroupCols.ColumnDefinitions.Count - 1 ? 0 : 1, 0) : new Thickness(0);
+        Thickness TargetRest(Border b) => b.Child is ScrollViewer ? new Thickness(0, 0, 1, 0) : new Thickness(0);
 
         void EndGroupDrag()
         {
@@ -616,6 +700,73 @@ namespace QuickDeploy
             var m = st.Mods.FirstOrDefault(x => x.Id == id);
             var ids = m != null ? Taken(m).Select(x => x.Id) : new[] { id };
             Run(new[] { "group-put" }.Concat(ids).Concat(where).ToArray());
+        }
+
+        // ---------------------------------------------------------------- a test from outside
+
+        /// <summary>HD2QD_CLICK_TEST=groups (measuring only): the window made short, the first
+        /// column scrolled down, a click on its last mod; then each column's width and scroll before
+        /// and after, and the menus of that mod and of the first folder as indented text, go to
+        /// HD2QD_WHEEL_OUT. Posted clicks do not reach WPF, so the click is raised here.</summary>
+        void GroupTest()
+        {
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") != "groups") return;
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+            t.Tick += (s, e) =>
+            {
+                t.Stop();
+                if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal;
+                Height = 560;
+                groupView = true;
+                groupPath.Clear();
+                selectedId = null;
+                RenderList();
+                UpdateLayout();
+                var out_ = new System.Text.StringBuilder();
+                Border First() => GroupCols.Children.OfType<Border>().First();
+                ScrollViewer Sv() => (ScrollViewer)First().Child;
+                Sv().ScrollToVerticalOffset(80);
+                UpdateLayout();
+                // the click a moment later, as a hand would: the redraw before it has settled
+                var wait = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+                wait.Tick += (s1, e1) =>
+                {
+                wait.Stop();
+                Sv().ScrollToVerticalOffset(80);
+                UpdateLayout();
+                out_.AppendLine("before width " + First().ActualWidth + " scroll " + Sv().VerticalOffset + " columns " + GroupCols.Children.Count);
+                var items = ((StackPanel)Sv().Content).Children.OfType<Border>().ToList();
+                var mod = items.LastOrDefault(b => b.Tag == null);
+                mod?.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    UpdateLayout();
+                    out_.AppendLine("after width " + First().ActualWidth + " scroll " + Sv().VerticalOffset + " columns " + GroupCols.Children.Count +
+                                    " chosen " + (st.Mods.FirstOrDefault(m => m.Id == selectedId)?.Name ?? "-"));
+                    void Dump(ItemsControl menu, int depth)
+                    {
+                        foreach (var x in menu.Items)
+                        {
+                            if (x is Separator) { out_.AppendLine(new string(' ', depth * 2) + "--"); continue; }
+                            if (!(x is MenuItem mi)) continue;
+                            out_.AppendLine(new string(' ', depth * 2) + mi.Header + (mi.IsChecked ? "  [x]" : "") + (mi.IsEnabled ? "" : "  (off)"));
+                            Dump(mi, depth + 1);
+                        }
+                    }
+                    var m = st.Mods.FirstOrDefault(x => x.Id == selectedId);
+                    if (m != null) { out_.AppendLine("== menu of " + m.Name); Dump(ModGroupMenu(new List<ModRow> { m }), 1); }
+                    var g = st.Groups.FirstOrDefault(x => x.Parent == null);
+                    if (g != null) { out_.AppendLine("== menu of folder " + g.Name); Dump(FolderMenu(g), 1); }
+                    out_.AppendLine("== menu of the top column");
+                    var cm = ColumnMenu(null);
+                    if (cm != null) Dump(cm, 1);
+                    var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                    if (path != null) System.IO.File.WriteAllText(path, out_.ToString());
+                }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                };
+                wait.Start();
+            };
+            t.Start();
         }
 
         // ---------------------------------------------------------------- the arrow keys, as Finder's

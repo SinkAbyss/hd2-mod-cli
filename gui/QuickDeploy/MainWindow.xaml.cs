@@ -189,6 +189,7 @@ namespace QuickDeploy
             ShowSaved();
             Refresh();
             ClickTest();
+            GroupTest();
             DragTest();
             Listen();
             SelfUpdateAtStart();
@@ -4705,6 +4706,7 @@ namespace QuickDeploy
                 down.Click += (s, e) => Run(To(Texts.TopWins ? "--top" : "--bottom"));
                 menu.Items.Add(down);
                 menu.Items.Add(TagMenu(m));
+                menu.Items.Add(ModGroupMenu(many));
                 if (many.Any(x => x.Channel == "Nexus Mods" || x.Channel == "GitHub"))
                 {
                     var match = new MenuItem { Header = Texts.F("many_match", many.Count) };
@@ -4736,6 +4738,7 @@ namespace QuickDeploy
             ProfileItems(menu, Taken(m));
             Item("rename", () => RenameMod(m));
             menu.Items.Add(TagMenu(m));
+            menu.Items.Add(ModGroupMenu(new List<ModRow> { m }));
             // the top and bottom of the screen, as the list is shown
             bool topWins = Texts.TopWins;
             Item(topWins ? "top_wins_top" : "top", () => Run("move", m.Id, topWins ? "--bottom" : "--top"));
