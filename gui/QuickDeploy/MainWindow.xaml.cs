@@ -103,6 +103,8 @@ namespace QuickDeploy
             PreviewKeyDown += (s, e) => { if (dragRow != null && e.Key == Key.Escape) { EndDrag(false); e.Handled = true; } };
             // the loader panel's details close like a menu (LoaderInfo)
             PreviewKeyDown += (s, e) => { if (e.Key == Key.Escape && loaderPop != null && loaderPop.IsOpen) { CloseLoaderInfo(); e.Handled = true; } };
+            // Esc leaves the settings page for the page it was opened from
+            PreviewKeyDown += (s, e) => { if (e.Key == Key.Escape && !e.Handled && SettingsPage.Visibility == Visibility.Visible) { ShowPage(pageBack); e.Handled = true; } };
             PreviewTextInput += TypeToSearch;
             PreviewMouseDown += (s, e) =>
             {
@@ -158,6 +160,7 @@ namespace QuickDeploy
             if (DownloadPage.Visibility == Visibility.Visible) RenderDownloads();
 #endif
             if (StoragePage.Visibility == Visibility.Visible) RenderStorage();
+            if (SettingsPage.Visibility == Visibility.Visible) RenderSettings();
         }
 
         // ---------------------------------------------------------------- start, state, commands
@@ -936,11 +939,21 @@ namespace QuickDeploy
                 g.Start();
                 return;
             }
-            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "settings")
+            var settingsTest = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST");
+            if (settingsTest == "settings" || settingsTest == "settings_end" || settingsTest == "settings_esc")
             {
-                // "settings": the settings window, so a test outside can take its picture
+                // "settings": the settings page, so a test outside can take its picture;
+                // "settings_end": that page scrolled to its end; "settings_esc": that page, then Esc
                 var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-                g.Tick += (s, e) => { g.Stop(); SettingsBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, SettingsBtn)); };
+                g.Tick += (s, e) =>
+                {
+                    g.Stop();
+                    SettingsBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, SettingsBtn));
+                    if (settingsTest == "settings_end")
+                        Dispatcher.BeginInvoke(new Action(() => SettingsPage.ScrollToEnd()), DispatcherPriority.Loaded);
+                    if (settingsTest == "settings_esc")
+                        Dispatcher.BeginInvoke(new Action(() => RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent })), DispatcherPriority.Loaded);
+                };
                 g.Start();
                 return;
             }
@@ -2505,9 +2518,15 @@ namespace QuickDeploy
             }
         }
 
-        /// <summary>One of the three pages: "deploy", "download" or "storage".</summary>
+        // the page the settings page was opened from: Esc and the gear go back to it
+        string pageBack = "deploy";
+
+        /// <summary>One of the pages: "deploy", "download", "storage", "tags", or "settings" (the
+        /// gear; a page of its own since 2026-10-27, the window was taller than the main one).</summary>
         void ShowPage(string page)
         {
+            if (page == "settings" && SettingsPage.Visibility != Visibility.Visible)
+                pageBack = StoragePage.IsVisible ? "storage" : TagsPage.IsVisible ? "tags" : DownloadPage.IsVisible ? "download" : "deploy";
             PageDeploy.IsChecked = page == "deploy";
             PageDownload.IsChecked = page == "download";
             PageStorage.IsChecked = page == "storage";
@@ -2516,11 +2535,17 @@ namespace QuickDeploy
             DownloadPage.Visibility = page == "download" ? Visibility.Visible : Visibility.Collapsed;
             StoragePage.Visibility = page == "storage" ? Visibility.Visible : Visibility.Collapsed;
             TagsPage.Visibility = page == "tags" ? Visibility.Visible : Visibility.Collapsed;
+            SettingsPage.Visibility = page == "settings" ? Visibility.Visible : Visibility.Collapsed;
+            // the gear lit while its page is on show, as the page buttons are
+            SettingsBtn.Background = page == "settings" ? B("Yellow") : Brushes.Transparent;
+            SettingsBtn.BorderBrush = page == "settings" ? B("Yellow") : B("Grid");
+            GearPath.Fill = page == "settings" ? B("TapeInk") : B("Ink");
 #if HAS_NEXUS
             if (page == "download") RenderDownloads();
 #endif
             if (page == "storage") RenderStorage();
             if (page == "tags") RenderTags();
+            if (page == "settings") { RenderSettings(); SettingsPage.ScrollToTop(); }
         }
 
         void Page_Click(object sender, RoutedEventArgs e) =>
@@ -5378,6 +5403,7 @@ namespace QuickDeploy
             StoragePage.Visibility == Visibility.Visible ? StoragePage
             : TagsPage.Visibility == Visibility.Visible ? TagsPage
             : DownloadPage.Visibility == Visibility.Visible ? DownloadPage
+            : SettingsPage.Visibility == Visibility.Visible ? SettingsPage
             : ListScroll;
 
         /// <summary>Whether the pointer is inside the menu itself.</summary>
@@ -6045,12 +6071,19 @@ namespace QuickDeploy
             Refresh();
         }
 
-        /// <summary>The settings, in a window of its own (the user, 2026-10-24): the language, whether
-        /// the explaining lines are shown, who made this and where it comes from.</summary>
-        void Settings_Click(object sender, RoutedEventArgs e)
+        /// <summary>The gear: the settings page, or back to the page it was opened from.</summary>
+        void Settings_Click(object sender, RoutedEventArgs e) =>
+            ShowPage(SettingsPage.Visibility == Visibility.Visible ? pageBack : "settings");
+
+        /// <summary>The settings page (the user, 2026-10-24; a page, not a window, since
+        /// 2026-10-27): the language, whether the explaining lines are shown, who made this and
+        /// where it comes from.</summary>
+        void RenderSettings()
         {
-            var w = Dialog.Blank(this, out var body);
-            body.Children.Add(new TextBlock { Text = Texts.Get("settings"), FontSize = 20, FontWeight = FontWeights.Bold, Foreground = B("Ink") });
+            SettingsBox.Children.Clear();
+            SettingsBox.Children.Add(new TextBlock { Text = Texts.Get("settings"), FontSize = 28, FontWeight = FontWeights.Bold });
+            var body = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            SettingsBox.Children.Add(body);
 
             // the language
             body.Children.Add(Label("set_lang", new Thickness(0, 20, 0, 6)));
@@ -6058,8 +6091,8 @@ namespace QuickDeploy
             var pair = new StackPanel { Orientation = Orientation.Horizontal };
             var zh = new RadioButton { Style = (Style)FindResource("Segment"), GroupName = "setlang", Content = "中文", MinWidth = 96, IsChecked = Texts.Zh };
             var en = new RadioButton { Style = (Style)FindResource("Segment"), GroupName = "setlang", Content = "English", MinWidth = 96, IsChecked = !Texts.Zh };
-            zh.Click += (s, e2) => { Language(true); w.Close(); Settings_Click(sender, e); };
-            en.Click += (s, e2) => { Language(false); w.Close(); Settings_Click(sender, e); };
+            zh.Click += (s, e2) => Language(true);
+            en.Click += (s, e2) => Language(false);
             pair.Children.Add(zh);
             pair.Children.Add(en);
             langs.Child = pair;
@@ -6218,11 +6251,6 @@ namespace QuickDeploy
             });
             body.Children.Add(Link(Texts.Get("author_name"), Texts.Get("author_url")));
             body.Children.Add(Link(Texts.Get("project_name"), Texts.Get("project_url")));
-
-            var close = new Button { Content = Texts.Get("close"), Style = (Style)FindResource("Primary"), MinWidth = 96, MinHeight = 38, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 24, 0, 0) };
-            close.Click += (s, e2) => w.Close();
-            body.Children.Add(close);
-            w.ShowDialog();
         }
 
         /// <summary>A resource type as the conflicts name it: in words for the common ones, else the engine's name.</summary>
