@@ -625,8 +625,11 @@ namespace Hd2Mod
             public List<Started> Mods = new List<Started>();
         }
 
+        /// <summary>The game's own folder of logs and dumps. HD2QD_GAME_LOGS names another, for a
+        /// demo library's pictures, which must show none of the player's sessions or crashes.</summary>
         public static string GameFolder =>
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Arrowhead", "Helldivers2");
+            Environment.GetEnvironmentVariable("HD2QD_GAME_LOGS") is string said && said.Length > 0 ? said
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Arrowhead", "Helldivers2");
 
         /// <summary>Tests only: the folder of the game's logs and dumps.</summary>
         public static string GameFolderOverride;

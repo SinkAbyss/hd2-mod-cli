@@ -2181,8 +2181,12 @@ namespace QuickDeploy
             var card = new StackPanel();
             int far = st.Mods.Count(m => m.Exists && !m.SameDrive);
             string state = far == 0 ? "target_link" : far == st.Mods.Count(m => m.Exists) ? "target_copy" : "target_mixed";
-            var head = new StackPanel { Orientation = Orientation.Horizontal };
-            head.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = B(far == 0 ? "Blue" : "Yellow"), Margin = new Thickness(0, 0, 8, 0) });
+            // the dot, then the title in the width that is left: in a horizontal StackPanel it had no
+            // width to wrap in, and a long title was cut ("Some mods on another d", 2026-10-26)
+            var head = new DockPanel();
+            var dot = new Ellipse { Width = 8, Height = 8, Fill = B(far == 0 ? "Blue" : "Yellow"), Margin = new Thickness(0, 3.5, 8, 0), VerticalAlignment = VerticalAlignment.Top };
+            DockPanel.SetDock(dot, Dock.Left);
+            head.Children.Add(dot);
             head.Children.Add(new TextBlock { Text = Texts.Get(state), FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             card.Children.Add(head);
             // no folders here: the Storage page shows them and changes them (the user, 2026-10-25)
