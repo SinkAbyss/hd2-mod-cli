@@ -6,6 +6,11 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- #if HAS_NEXUS -->
+    <!-- the tests cover every part, the Nexus Mods one too; -p:NoNexus=true tests the build
+         without it, as the public repository has it (tools/export_public.py) -->
+    <DefineConstants Condition="'$(NoNexus)' != 'true'">$(DefineConstants);HAS_NEXUS</DefineConstants>
+    <!-- #endif -->
   </PropertyGroup>
 
   <!-- a build with another output path must still ignore the default obj\ and bin\ -->

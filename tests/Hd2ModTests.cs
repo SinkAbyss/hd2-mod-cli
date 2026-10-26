@@ -516,6 +516,9 @@ namespace Hd2Mod.Tests
             baseUrl = "http://localhost:" + port + "/";
             server.Prefixes.Add(baseUrl);
             server.Start();
+#if HAS_NEXUS
+            Nexus.ApiBase = baseUrl.TrimEnd('/');
+#endif
             Updates.GitHubApi = baseUrl + "gh";
             System.Threading.Tasks.Task.Run(Serve);
             for (int f = 1; f <= 2; f++) zips["f" + f] = Zip(("Cape/manifest.json", "{\"Name\": \"Cape Colours\"}"), ("Cape/" + A + ".patch_0", "cape v" + f));
@@ -538,6 +541,11 @@ namespace Hd2Mod.Tests
                 try { c = server.GetContext(); }
                 catch (Exception) { return; }
                 var path = c.Request.Url.AbsolutePath;
+#if HAS_NEXUS
+                lock (Seen) Seen.Add(path + " " + c.Request.Headers["Application-Name"]);
+                bool authed = (c.Request.Headers["Authorization"] ?? "").StartsWith("Bearer ey");
+                var m = Regex.Match(path, @"^/v1/games/helldivers2/mods/77/files/(\d+)(/download_link)?\.json$");
+#endif
                 int status = 200;
                 byte[] body;
                 if (path.StartsWith("/cdn/")) body = zips[path.Substring(5).Replace(".zip", "")];
@@ -552,6 +560,33 @@ namespace Hd2Mod.Tests
                                  " {\"tag_name\": \"v0.98.0\", \"draft\": false, \"prerelease\": false, \"html_url\": \"https://github.com/pat-pat-patrick/hd2-mod-cli/releases/tag/v0.98.0\"}," +
                                  " {\"tag_name\": \"v0.1.0\", \"draft\": false, \"prerelease\": false, \"html_url\": \"o\"}]");
                 else if (path.StartsWith("/gh/")) { status = 404; body = Bytes("{}"); }
+#if HAS_NEXUS
+                // Nexus: the game's mods updated in the last month: 77, at its file 2's time
+                else if (path == "/v1/games/helldivers2/mods/updated.json" && authed)
+                    body = Bytes("[{\"mod_id\": 77, \"latest_file_update\": 1750000000, \"latest_mod_activity\": 1750000000}]");
+                // Nexus: mod 77's files: 1 (old), replaced by 2 (main)
+                else if (path == "/oauth/token" && c.Request.HttpMethod == "POST")
+                {
+                    var form = new StreamReader(c.Request.InputStream).ReadToEnd().Split('&').Select(p => p.Split('='))
+                                   .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p.Length > 1 ? p[1].Replace('+', ' ') : ""));
+                    (status, body) = OAuthToken(form);
+                }
+                else if (path == "/v1/games/helldivers2/mods/77/files.json" && authed)
+                    body = Bytes("{\"files\": [{\"file_id\": 1, \"version\": \"1.0\", \"category_name\": \"OLD_VERSION\", \"uploaded_timestamp\": 1700000000}, " +
+                                 "{\"file_id\": 2, \"version\": \"2.0\", \"category_name\": \"MAIN\", \"uploaded_timestamp\": 1750000000}], " +
+                                 "\"file_updates\": [{\"old_file_id\": 1, \"new_file_id\": 2}]}");
+                else if (!authed) { status = 401; body = Bytes("{\"message\":\"bad key\"}"); }
+                // mods 500 and up: the rate limit is used up
+                else if (Regex.IsMatch(path, @"^/v1/games/helldivers2/mods/5\d\d/")) { status = 429; body = Bytes("{\"message\":\"rate limited\"}"); }
+                else if (path == "/v1/games/helldivers2/mods/77.json")
+                    body = Bytes("{\"name\": \"Cape Colours on Nexus\", \"author\": \"Capey\", \"summary\": \"Capes in every colour.\", \"version\": \"2.0\"}");
+                else if (m.Success && m.Groups[2].Success)
+                {
+                    if (c.Request.QueryString["key"] == null || c.Request.QueryString["expires"] == null) { status = 403; body = Bytes("{\"message\":\"premium only\"}"); }
+                    else body = Bytes("[{\"name\": \"Nexus CDN\", \"URI\": \"" + baseUrl + "cdn/f" + m.Groups[1].Value + ".zip\"}]");
+                }
+                else if (m.Success) body = Bytes("{\"file_name\": \"Cape Colours-77-" + m.Groups[1].Value + ".zip\", \"name\": \"Cape\"}");
+#endif
                 else { status = 404; body = Bytes("{}"); }
                 c.Response.StatusCode = status;
                 c.Response.OutputStream.Write(body, 0, body.Length);
@@ -565,12 +600,197 @@ namespace Hd2Mod.Tests
             base.Dispose();
         }
 
+#if HAS_NEXUS
+        static string Link(int file, bool withKey = true) =>
+            "nxm://helldivers2/mods/77/files/" + file + (withKey ? "?key=abc%2Bd&expires=1700000000&user_id=5" : "");
+
+        [Fact]
+        public void LinkIsRead()
+        {
+            var l = NxmLink.Parse("nxm://HellDivers2/mods/77/files/1234?key=abc%2Bd&expires=1700000000&user_id=5");
+            Assert.Equal("helldivers2", l.Game);
+            Assert.Equal(77, l.Mod);
+            Assert.Equal(1234, l.File);
+            Assert.Equal("abc+d", l.Key);
+            Assert.Equal("1700000000", l.Expires);
+            Assert.Throws<ModError>(() => NxmLink.Parse("https://www.nexusmods.com/helldivers2/mods/77"));
+        }
+
+        // ------------------------------------------------------------ OAuth 2.0 with PKCE (Nexus Mods' guide)
+
+        // the fake sign-in service's own key, the challenge it was shown, the refresh tokens it honours
+        static readonly System.Security.Cryptography.RSACryptoServiceProvider SigningKey = new System.Security.Cryptography.RSACryptoServiceProvider(2048);
+        string shownChallenge;
+        readonly HashSet<string> refreshable = new HashSet<string>();
+        int issued;
+
+        static string B64Url(byte[] b) => Convert.ToBase64String(b).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+
+        static string Jwt(string user, bool premium)
+        {
+            var head = B64Url(Encoding.UTF8.GetBytes("{\"alg\":\"RS256\",\"typ\":\"JWT\"}"));
+            var body = B64Url(Encoding.UTF8.GetBytes("{\"user\":{\"username\":\"" + user + "\",\"membership_roles\":[\"member\"" + (premium ? ",\"premium\"" : "") + "]}}"));
+            var sig = SigningKey.SignData(Encoding.ASCII.GetBytes(head + "." + body), "SHA256");
+            return head + "." + body + "." + B64Url(sig);
+        }
+
+        /// <summary>The test key as a SubjectPublicKeyInfo, as Nexus Mods publishes its own.</summary>
+        static string Spki(System.Security.Cryptography.RSAParameters k)
+        {
+            byte[] Der(byte tag, byte[] v)
+            {
+                var len = v.Length < 0x80 ? new[] { (byte)v.Length } : v.Length < 0x100 ? new byte[] { 0x81, (byte)v.Length } : new byte[] { 0x82, (byte)(v.Length >> 8), (byte)v.Length };
+                return new[] { tag }.Concat(len).Concat(v).ToArray();
+            }
+            byte[] Int(byte[] v) => Der(0x02, (v[0] & 0x80) != 0 ? new byte[] { 0 }.Concat(v).ToArray() : v);
+            var rsa = Der(0x30, Int(k.Modulus).Concat(Int(k.Exponent)).ToArray());
+            var alg = Der(0x30, new byte[] { 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01, 0x05, 0x00 });
+            return Convert.ToBase64String(Der(0x30, alg.Concat(Der(0x03, new byte[] { 0 }.Concat(rsa).ToArray())).ToArray()));
+        }
+
+        (int, byte[]) OAuthToken(Dictionary<string, string> form)
+        {
+            if (form["grant_type"] == "authorization_code")
+            {
+                // the code this sign-in sent, with the verifier whose challenge was shown
+                if (form["code"] != "the-code" || NexusOAuth.Challenge(form["code_verifier"]) != shownChallenge || form["client_id"] != "test-client")
+                    return (400, Bytes("{\"error\":\"invalid_grant\"}"));
+            }
+            else if (!refreshable.Remove(form["refresh_token"])) return (400, Bytes("{\"error\":\"invalid_grant\"}"));
+            var refresh = "r" + (++issued);
+            refreshable.Add(refresh);
+            return (200, Bytes("{\"access_token\":\"" + Jwt("tester", true) + "\",\"refresh_token\":\"" + refresh + "\",\"expires_in\":21600}"));
+        }
+
+        /// <summary>RFC 7636's own example: the challenge of its verifier.</summary>
+        [Fact]
+        public void PkceChallengeIsTheRfcs()
+        {
+            Assert.Equal("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", NexusOAuth.Challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"));
+            var v = NexusOAuth.NewVerifier();
+            Assert.InRange(v.Length, 43, 128);
+            Assert.NotEqual(v, NexusOAuth.NewVerifier());
+        }
+
+        /// <summary>The key Nexus Mods publishes for its tokens is read: a 2048-bit modulus, exponent 65537.</summary>
+        [Fact]
+        public void NexusModsKeyIsRead()
+        {
+            var k = NexusOAuth.KeyOf(NexusOAuth.PublicKeyPem);
+            Assert.Equal(256, k.Modulus.Length);
+            Assert.Equal(new byte[] { 1, 0, 1 }, k.Exponent);
+        }
+
+        /// <summary>Signing in as Nexus Mods' guide has it: the browser sent to the authorize page with
+        /// an S256 challenge; a request with another state (or another path) waited past; the code
+        /// exchanged with the verifier; the token verified and kept; requests then carry it; an ended
+        /// token renewed; a renewal refused signs out (the user, 2026-10-27).</summary>
+        [Fact]
+        public void SignInWithPkce()
+        {
+            var keep = (NexusOAuth.PublicKeyPem, NexusOAuth.UsersBase, NexusOAuth.Port, NexusOAuth.Now);
+            Environment.SetEnvironmentVariable("HD2QD_NEXUS_CLIENT_ID", "test-client");
+            try
+            {
+                NexusOAuth.PublicKeyPem = Spki(SigningKey.ExportParameters(false));
+                NexusOAuth.UsersBase = Nexus.ApiBase;
+                var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+                probe.Start();
+                NexusOAuth.Port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+                probe.Stop();
+                Uri opened = null;
+                var (name, premium) = NexusOAuth.Login(url =>
+                {
+                    opened = new Uri(url);
+                    var q = opened.Query.TrimStart('?').Split('&').Select(p => p.Split(new[] { '=' }, 2))
+                                   .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p.Length > 1 ? p[1] : ""));
+                    shownChallenge = q["code_challenge"];
+                    Assert.Equal("S256", q["code_challenge_method"]);
+                    Assert.Equal("test-client", q["client_id"]);
+                    Assert.Equal(NexusOAuth.RedirectUri, q["redirect_uri"]);
+                    var back = q["redirect_uri"];
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        using (var h = new System.Net.Http.HttpClient())
+                        {
+                            Assert.Equal(System.Net.HttpStatusCode.NotFound, h.GetAsync(back.Replace("/callback", "/favicon.ico")).Result.StatusCode);
+                            h.GetAsync(back + "?code=the-code&state=not-this-one").Wait();
+                            h.GetAsync(back + "?code=the-code&state=" + q["state"]).Wait();
+                        }
+                    });
+                }, TimeSpan.FromSeconds(20));
+                Assert.Equal("/oauth/authorize", opened.AbsolutePath);
+                Assert.Equal(("tester", true), (name, premium));
+                Assert.StartsWith("Bearer ey", Nexus.Credential());
+                Assert.DoesNotContain("tester", File.ReadAllText(Store.PathOf("nexus.json")));   // kept encrypted
+                // requests carry it
+                Assert.Equal("update", Updates.One(UpdatesMod()).Status);
+                // six hours on: renewed with the refresh token, still signed in
+                var first = Nexus.Credential();
+                NexusOAuth.Now = () => DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 21600;
+                Assert.StartsWith("Bearer ey", Nexus.Credential());
+                Assert.Equal(2, issued);
+                // the access taken back on Nexus Mods: the renewal is refused, and it is signed out here
+                refreshable.Clear();
+                NexusOAuth.Now = () => DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 2 * 21600;
+                var e = Assert.Throws<ModError>(() => Nexus.Credential());
+                Assert.Equal("nexus_login", e.Kind);
+                Assert.False(NexusOAuth.SignedIn);
+                Assert.NotNull(first);
+            }
+            finally
+            {
+                (NexusOAuth.PublicKeyPem, NexusOAuth.UsersBase, NexusOAuth.Port, NexusOAuth.Now) = keep;
+                Environment.SetEnvironmentVariable("HD2QD_NEXUS_CLIENT_ID", null);
+            }
+        }
+
+        /// <summary>A mod from Nexus mod 77, file 1 (replaced by file 2 there).</summary>
+        static Mod UpdatesMod() => new Mod { Id = "m77", Name = "Cape", Nexus = new NexusRef { Game = "helldivers2", Mod = 77, File = 1 } };
+#endif
 
 
 
 
 
 
+
+#if HAS_NEXUS
+        [Fact]
+        public void TheButtonIsTakenAndGivenBack()
+        {
+            // a key of the test's own: the real Software\Classes\nxm is never touched
+            var real = Nexus.Classes;
+            var testKey = @"Software\hd2qd-tests\nxm-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            Nexus.Classes = testKey;
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(testKey + @"\shell\open\command"))
+                    k.SetValue("", "\"C:\\Program Files\\Other\\Other.exe\" \"%1\"");
+                // the window's exe, and a copy of it elsewhere (a new build, a release folder)
+                var exe = Path.Combine(Root, "release", "HD2 Mod Quick Deploy.exe");
+                var copy = Path.Combine(Root, "bin", "HD2 Mod Quick Deploy.exe");
+                foreach (var p in new[] { exe, copy }) { Directory.CreateDirectory(Path.GetDirectoryName(p)); File.WriteAllText(p, "exe"); }
+                Assert.False(Nexus.IsOurs(exe));
+                Nexus.TakeOver(exe);
+                Assert.True(Nexus.IsOurs(exe));
+                Assert.True(Nexus.IsOurs(copy));                                  // the same program, run from elsewhere
+                Assert.Equal("\"" + exe + "\" \"%1\"", Nexus.Handler());
+                Assert.Equal("\"C:\\Program Files\\Other\\Other.exe\" \"%1\"", Nexus.Previous());
+                Nexus.TakeOver(exe);                                             // again: the one before is still Other
+                Assert.Equal("\"C:\\Program Files\\Other\\Other.exe\" \"%1\"", Nexus.Previous());
+                File.Delete(exe);
+                Assert.False(Nexus.IsOurs(copy));                                 // the registered one is gone: not ours
+                Nexus.GiveBack();
+                Assert.Equal("\"C:\\Program Files\\Other\\Other.exe\" \"%1\"", Nexus.Handler());
+            }
+            finally
+            {
+                Nexus.Classes = real;
+                Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(testKey.Substring(0, testKey.LastIndexOf('\\')), false);
+            }
+        }
+#endif
 
 
         /// <summary>A mod from GitHub: checked against the repository's latest release, and

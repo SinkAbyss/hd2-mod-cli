@@ -80,8 +80,18 @@ namespace Hd2Mod
             Cmd("tag-new", new Spec { Help = "make a label, before any mod carries it", Positionals = new[] { "name" }, Run = TagNew }),
             Cmd("tag-rename", new Spec { Help = "rename a label everywhere it is used", Positionals = new[] { "name", "to" }, Run = TagRename }),
             Cmd("tag-delete", new Spec { Help = "take a label off every mod", Positionals = new[] { "name" }, Run = TagDelete }),
+#if HAS_NEXUS
+            Cmd("nexus", new Spec { Help = "download a Nexus Mods link (nxm://...) and put it in the library (a mod from it already there gets the new version)",
+                                    Positionals = new[] { "link" }, Run = NexusCmd }),
+            Cmd("nexus-login", new Spec { Help = "sign in to Nexus Mods: your browser opens Nexus Mods' page, where you allow this program (OAuth with PKCE)",
+                                          Run = NexusLoginCmd }),
+            Cmd("nexus-logout", new Spec { Help = "sign out of Nexus Mods here (the access can also be taken back on Nexus Mods)", Run = NexusLogoutCmd }),
+            Cmd("check-updates", new Spec { Help = "check every mod for a newer version on its own channel (Nexus Mods when signed in, GitHub releases)", Run = CheckUpdatesCmd }),
+            Cmd("update", new Spec { Help = "download a mod's newer version from GitHub (or Nexus Mods, premium accounts) and put it in the library", Positionals = new[] { "mod" }, Run = UpdateCmd }),
+#else
             Cmd("check-updates", new Spec { Help = "check every mod from GitHub for a newer release", Run = CheckUpdatesCmd }),
             Cmd("update", new Spec { Help = "download a mod's newer release from GitHub and put it in the library", Positionals = new[] { "mod" }, Run = UpdateCmd }),
+#endif
             Cmd("source", new Spec { Help = "set where a mod comes from: a Nexus Mods page, a GitHub repository, or another page (--clear: none)",
                                      Positionals = new[] { "mod" }, Many = true, Flags = new[] { "--clear" }, Run = SourceCmd }),
             Cmd("delete", new Spec { Help = "delete mods from the disk for good: out of the library and the game (one deploy), their folders deleted",
@@ -730,7 +740,31 @@ namespace Hd2Mod
             o.WriteLine("removed " + mod.Name + " (its files stay where they are; deploy to take it out of the game)");
         }
 
+#if HAS_NEXUS
+        static void NexusCmd(Args a, TextWriter o)
+        {
+            var link = NxmLink.Parse(a.Pos["link"]);
+            var (mod, replaced) = Nexus.Install(link, Nexus.Credential());
+            o.WriteLine((replaced ? "new version: " : "added: ") + mod.Name + "  (" + mod.Path + ")");
+        }
+#endif
 
+#if HAS_NEXUS
+
+        static void NexusLoginCmd(Args a, TextWriter o)
+        {
+            o.WriteLine("your browser opens Nexus Mods: allow HD2 Mod Quick Deploy there");
+            var (name, premium) = NexusOAuth.Login(url => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }),
+                                                   TimeSpan.FromMinutes(5));
+            o.WriteLine("signed in as " + name + " (" + (premium ? "premium" : "free") + " account)");
+        }
+
+        static void NexusLogoutCmd(Args a, TextWriter o)
+        {
+            NexusOAuth.Logout();
+            o.WriteLine("signed out of Nexus Mods here; the access can be taken back on Nexus Mods as well");
+        }
+#endif
 
         static string LoaderName(string kind, ModLua ml) =>
             kind == "bml" ? "Boot Mod Loader" + (ml?.Boot?.BootVersion != null ? " " + ml.Boot.BootVersion : "")
@@ -875,7 +909,13 @@ namespace Hd2Mod
             var u = Updates.Check(new Library { Mods = { mod } }).First();
             if (u.Status != "update") throw new ModError(mod.Name + ": no newer version found (" + u.Status + (u.Why != null ? ", " + u.Why : "") + ")", "no_update");
             if (mod.GitHub != null) { o.WriteLine("updated: " + Updates.ApplyGitHub(mod.Id, u).Name + " " + u.Latest); return; }
+#if HAS_NEXUS
+            var link = new NxmLink { Game = mod.Nexus.Game, Mod = mod.Nexus.Mod, File = u.LatestFile };
+            var (m, _) = Nexus.Install(link, Nexus.Credential());
+            o.WriteLine("updated: " + m.Name + " " + u.Latest);
+#else
             throw new ModError(mod.Name + ": no newer version found", "no_update");
+#endif
         }
 
         static void SourceCmd(Args a, TextWriter o)

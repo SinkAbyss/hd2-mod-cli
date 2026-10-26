@@ -216,7 +216,7 @@ from:
 | Source | How it is checked | How it is updated |
 |---|---|---|
 | GitHub | The repository's latest release. | **Update** downloads the release's zip, 7z or rar. |
-| Nexus Mods | Only in the official build. | Only in the official build. |
+| Nexus Mods | Signed in to Nexus Mods (see *Nexus Mods*): one request for the game's mods updated in the last month, then one for each of your mods that changed since its last check. | Premium accounts: **Update** downloads the new file. Free accounts: **Open page**, then *Mod Manager Download* on the site. |
 | Another site | Not checked. | **Open page**. |
 
 - The source is recorded when a mod arrives: a file downloaded with a browser
@@ -227,6 +227,23 @@ from:
 - Mods with updates get a yellow tag in the list and their own filter, **Updates**.
 - An update keeps the mod's place in the load order, on/off and options; then
   deploy.
+
+### Nexus Mods
+
+In builds with the Nexus Mods part (ours, and `build.bat --with-nexus`):
+
+- **Signing in.** *Sign in to Nexus Mods* on the Download page opens Nexus Mods'
+  own page in your browser, where you allow this program (OAuth 2.0 with PKCE).
+  The program never sees your password. The sign-in is kept on this computer
+  only, encrypted for your Windows account, and renewed by itself. *Sign out*
+  forgets it here; the access can also be taken back on Nexus Mods.
+- **Downloads.** The site's *Mod Manager Download* button hands the file to this
+  program once it is the program for those links (one button on the Download
+  page takes them, another gives them back to the program that had them).
+  Premium accounts can also update a mod from the list directly.
+- **Requests.** Every request follows something you clicked, and carries this
+  program's name and version. Nothing is asked of Nexus Mods at start-up or in
+  the background.
 
 ### Lua mods before a deploy
 
@@ -384,6 +401,12 @@ the .NET SDK 8 or later (`dotnet` on PATH, or set `DOTNET` to its
 | `gui\QuickDeploy\` | The window (WPF). |
 | `tests\` | xUnit tests against a fake game folder in `%TEMP%`. |
 
+The Nexus Mods part is left out unless asked for: `build.bat --with-nexus`. Signing in
+to Nexus Mods needs the client id Nexus Mods issues to each registered application
+(email support@nexusmods.com, as their OAuth guide says). Put it in
+`nexus_client_id.txt` beside `build.bat`; that file is not in the repository. Our own
+builds carry ours; a build you publish registers its own application and its own name.
+
 Versions up to 0.1 were a Python script, kept at the git tag `python-0.1`; up
 to 0.2 the command was called `hd2mod`. The settings files are the same, so
 nothing needs migrating.
@@ -519,13 +542,21 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 | 来源 | 检查方式 | 更新方式 |
 |---|---|---|
 | GitHub | 仓库的最新发布版本（Release）。 | 点击 **更新** 下载该版本的 zip、7z 或 rar。 |
-| Nexus Mods | 仅在正式版提供。 | 仅在正式版提供。 |
+| Nexus Mods | 登录 Nexus Mods 后（见“Nexus Mods”）：先请求一次该游戏最近一个月有更新的 mod，再只对上次检查后有变化的 mod 各请求一次。 | 高级会员：点击 **更新** 直接下载新文件。普通会员：点击 **打开页面**，在网站上点击“Mod Manager Download”。 |
 | 其他网站 | 不检查。 | 点击 **打开页面** 查看。 |
 
 - mod 的来源在加入时自动记录：用浏览器下载的文件（Windows 会保存下载地址），以及 HD2 Arsenal 为其安装的 mod 保存的记录。
 - 未记录来源的 mod，可在详情中点击 **设置来源…**，填写该 mod 的 Nexus Mods 页面或 GitHub 仓库地址。
 - 有更新的 mod 在列表中显示黄色标记，并可通过 **有更新** 筛选查看。
 - 更新后，mod 的加载顺序、开关和可选内容保持不变；之后执行部署即可生效。
+
+### Nexus Mods
+
+包含 Nexus Mods 部分的版本（我们发布的版本，以及 `build.bat --with-nexus` 构建的版本）：
+
+- **登录**：在“下载”页面点击“登录 Nexus Mods”，会在浏览器中打开 Nexus Mods 自己的页面，在那里允许本程序即可（OAuth 2.0 + PKCE）。本程序不会接触你的密码。登录信息仅保存在本机，以你的 Windows 账户加密，并会自动续期。“退出登录”只在本机删除登录信息；也可以在 Nexus Mods 网站上收回本程序的访问权限。
+- **下载**：本程序接管“Mod Manager Download”链接后，网站上的这个按钮会把文件交给本程序（“下载”页面上一个按钮用于接管，另一个用于交还给原来的程序）。高级会员还可以在列表中直接更新 mod。
+- **请求**：每次请求都由你的操作发起，并带有本程序的名称和版本。启动时和后台都不会向 Nexus Mods 发送请求。
 
 ### LUA MOD 部署前检查
 

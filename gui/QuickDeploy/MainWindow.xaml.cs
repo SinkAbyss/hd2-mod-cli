@@ -69,7 +69,11 @@ namespace QuickDeploy
         const string GlyphBottom = "M5 20h14 M12 4v11 M7 10l5 5 5-5";
 
         /// <summary>Whether this build has the download page.</summary>
+#if !HAS_NEXUS
         const bool HasNexus = false;
+#else
+        const bool HasNexus = true;
+#endif
 
         static Brush B(string key) => (Brush)Application.Current.Resources[key];
         FontFamily Mono => (FontFamily)FindResource("Mono");
@@ -150,6 +154,9 @@ namespace QuickDeploy
             List.Children.Clear();
             lastDone = null;
             if (st != null) Render();
+#if HAS_NEXUS
+            if (DownloadPage.Visibility == Visibility.Visible) RenderDownloads();
+#endif
             if (StoragePage.Visibility == Visibility.Visible) RenderStorage();
         }
 
@@ -178,6 +185,9 @@ namespace QuickDeploy
             DragTest();
             Listen();
             SelfUpdateAtStart();
+#if HAS_NEXUS
+            if (App.StartLink != null) Dispatcher.BeginInvoke(new Action(() => Arrived(App.StartLink)), DispatcherPriority.ApplicationIdle);
+#endif
         }
 
         /// <summary>The red dot on the settings icon, from the last check of this program's own
@@ -1054,6 +1064,9 @@ namespace QuickDeploy
         static readonly HashSet<string> StateFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "library.json", "deployed.json", "deploying.json", "config.json",
+#if HAS_NEXUS
+            "nexus.json",
+#endif
         };
 
         /// <summary>The size and time of the library and the deploy record, as one string.</summary>
@@ -1370,6 +1383,12 @@ namespace QuickDeploy
                 case "protected": Dialog.Tell(this, Texts.F("del_protected", r.Refused.Arg)); break;
                 case "shared": Dialog.Tell(this, Texts.F("del_shared", r.Refused.Arg)); break;
                 case "delete_failed": Dialog.Tell(this, Texts.F("delete_failed", r.Refused.Arg)); break;
+#if HAS_NEXUS
+                case "nexus_login": Dialog.Tell(this, Texts.F("nx_sign_in_failed", r.Message)); break;
+                case "nexus_refused": Dialog.Tell(this, Texts.Get("nx_refused")); break;
+                case "nexus_offline": Dialog.Tell(this, Texts.Get("nx_offline")); break;
+                case "nexus_busy": Dialog.Tell(this, Texts.Get("nx_busy")); break;
+#endif
                 case "not_zip": Dialog.Tell(this, Texts.F("nx_not_zip", r.Refused.Arg)); break;
                 default: Dialog.Tell(this, Texts.F("failed", r.Message)); break;
             }
@@ -2127,6 +2146,9 @@ namespace QuickDeploy
             Mark("render: rows");
             RenderDetail();
             Mark("render: details");
+#if HAS_NEXUS
+            if (DownloadPage.Visibility == Visibility.Visible) RenderDownloads();
+#endif
             if (StoragePage.Visibility == Visibility.Visible) RenderStorage();
             if (startPage == "download" || startPage == "storage" || startPage == "tags") ShowPage(startPage);
             startPage = null;
@@ -2242,6 +2264,11 @@ namespace QuickDeploy
 
         static string Exe => System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
 
+#if HAS_NEXUS
+        // the download now going: what it is and how far (shown on the download page)
+        string downloading;
+        TextBlock progressText;
+#endif
 
         /// <summary>A row of a list on a faint band every other row, so a name on the left and its
         /// number on the right pair up at a glance (the user, 2026-10-25). In a card the band runs
@@ -2259,12 +2286,220 @@ namespace QuickDeploy
 
         TextBlock Heading(string text) => new TextBlock { Text = text, FontWeight = FontWeights.SemiBold, FontSize = 16, TextWrapping = TextWrapping.Wrap };
 
+#if HAS_NEXUS
+        /// <summary>The download page: the site's Mod Manager Download button (who gets it, take
+        /// it or give it back), the Nexus Mods account, the download going now, the downloads so far, and
+        /// the mods in the library that came from Nexus Mods.</summary>
+        void RenderDownloads()
+        {
+            Downloads.Children.Clear();
+            Downloads.Children.Add(new TextBlock { Text = Texts.Get("dl_title"), FontSize = 28, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 0, 0, 4) });
+            Downloads.Children.Add(Texts.Hints ? Small(Texts.Get("dl_intro"), new Thickness(0, 0, 0, 20)) : new Border { Height = 12 });
+
+            // the button and the key, side by side
+            var top = new Grid { Margin = new Thickness(0, 0, 0, 20) };
+            top.ColumnDefinitions.Add(new ColumnDefinition());
+            top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+            top.ColumnDefinitions.Add(new ColumnDefinition());
+
+            bool ours = Nexus.IsOurs(Exe);
+            var button = new StackPanel();
+            var head = new DockPanel();            // the words wrap beside the dot
+            var dot = new Ellipse { Width = 10, Height = 10, Fill = B(ours ? "Blue" : "Muted"), Margin = new Thickness(0, 7, 10, 0), VerticalAlignment = VerticalAlignment.Top };
+            DockPanel.SetDock(dot, Dock.Left);
+            head.Children.Add(dot);
+            head.Children.Add(Heading(Texts.Get(ours ? "nx_ours" : "nx_not_ours")));
+            button.Children.Add(head);
+            var other = ours ? null : Program(Nexus.Handler());
+            button.Children.Add(Small(ours ? Texts.Get("nx_ours_n") : other != null ? Texts.F("nx_other_n", other) : Texts.Get("nx_none_n"), new Thickness(0, 8, 0, 0)));
+            var before = Program(Nexus.Previous());
+            var take = new Button
+            {
+                Content = ours ? (before != null ? Texts.F("nx_give_back", before) : Texts.Get("nx_off")) : Texts.Get("nx_take"),
+                Style = (Style)FindResource(ours ? "Ghost" : "Primary"), MinHeight = 40, Margin = new Thickness(0, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
+                IsEnabled = !ours || before != null,
+            };
+            take.Click += (s, e) =>
+            {
+                try
+                {
+                    if (ours) Nexus.GiveBack();
+                    else Nexus.TakeOver(Exe);
+                }
+                catch (Exception x) when (x is ModError || x is UnauthorizedAccessException || x is System.Security.SecurityException) { Dialog.Tell(this, Texts.F("failed", x.Message)); }
+                RenderDownloads();
+            };
+            button.Children.Add(take);
+            var c1 = Card(button);
+            top.Children.Add(c1);
+
+            var keyPanel = new StackPanel();
+            if (NexusOAuth.ClientId != null) SignInCard(keyPanel);
+            else
+            {
+            SignInCard(keyPanel);          // no sign-in id in this build: it says so
+            }
+            var c2 = Card(keyPanel);
+            Grid.SetColumn(c2, 2);
+            top.Children.Add(c2);
+            Downloads.Children.Add(top);
+
+            // where downloads go: the default mod folder, chosen on the storage page
+            var where = new DockPanel();
+            var change = new Button { Content = Texts.Get("dl_where_change"), Style = (Style)FindResource("Ghost"), MinHeight = 36, VerticalAlignment = VerticalAlignment.Center };
+            change.Click += (s, e) => ShowPage("storage");
+            DockPanel.SetDock(change, Dock.Right);
+            where.Children.Add(change);
+            var wordsWhere = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
+            wordsWhere.Children.Add(Heading(Texts.Get("dl_where")));
+            wordsWhere.Children.Add(Code(Store.ModsDir()));
+            wordsWhere.Children.Add(Small(Texts.Get("dl_where_n"), new Thickness(0, 4, 0, 0)));
+            where.Children.Add(wordsWhere);
+            Downloads.Children.Add(Card(where));
+            Downloads.Children.Add(new Border { Height = 20 });
+
+            // the download going now
+            if (downloading != null)
+            {
+                var now = new StackPanel();
+                now.Children.Add(Heading(Texts.F("dl_now", downloading)));
+                progressText = new TextBlock { FontFamily = Mono, FontSize = 13, Foreground = B("Blue"), Margin = new Thickness(0, 8, 0, 0) };
+                now.Children.Add(progressText);
+                Downloads.Children.Add(Card(now));
+                Downloads.Children.Add(new Border { Height = 20 });
+            }
+
+            // the downloads so far
+            // every one kept, in a list about ten rows high that scrolls: all of them in the page
+            // took the page over (the user, 2026-10-25). The wheel moves on from its end as any
+            // list inside a page does (Wheel).
+            var history = Nexus.History();
+            Downloads.Children.Add(new TextBlock
+            {
+                Text = history.Count > 0 ? Texts.F("dl_history_n", history.Count) : Texts.Get("dl_history"),
+                FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = B("Muted"), Margin = new Thickness(0, 0, 0, 8),
+            });
+            if (history.Count == 0) Downloads.Children.Add(Small(Texts.Get("dl_history_none"), new Thickness(0, 0, 0, 20)));
+            else
+            {
+                var table = new StackPanel();
+                int historyBand = 0;
+                // built as the list scrolls, forty rows at a time: five hundred rows at once took
+                // 0.94 s, and the page is drawn again on every refresh
+                void AddRow(Dictionary<string, object> h)
+                {
+                    var row = new DockPanel { Margin = new Thickness(0, 6, 0, 6) };
+                    // the page it was downloaded from, at the file itself (the user, 2026-10-25)
+                    long hMod = Json.Long(h, "mod"), hFile = Json.Long(h, "file");
+                    if (hMod > 0)
+                    {
+                        var url = Nexus.Page(new NexusRef { Game = Json.Str(h, "game") ?? Nexus.Game, Mod = hMod }) +
+                                  "?tab=files" + (hFile > 0 ? "&file_id=" + hFile : "");
+                        var page = new Button { Content = Texts.Get("dl_file_page"), Style = (Style)FindResource("Ghost"), MinHeight = 30, FontSize = 12, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                        page.Click += (s, e) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                        DockPanel.SetDock(page, Dock.Right);
+                        row.Children.Add(page);
+                    }
+                    string result = Json.Str(h, "result");
+                    var tag = new Border
+                    {
+                        Width = 92, Margin = new Thickness(0, 0, 12, 0), Padding = new Thickness(6, 1, 6, 1), VerticalAlignment = VerticalAlignment.Center,
+                        Background = B(result == "failed" ? "Red" : result == "replaced" ? "Blue" : "Yellow"),
+                        Child = new TextBlock { Text = Texts.Get("dl_" + result), FontSize = 12, FontWeight = FontWeights.Bold, Foreground = B(result == "failed" ? "Ink" : "TapeInk"), HorizontalAlignment = HorizontalAlignment.Center },
+                    };
+                    DockPanel.SetDock(tag, Dock.Left);
+                    row.Children.Add(tag);
+                    var when = new TextBlock { Text = Json.Str(h, "time"), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), Width = 150, VerticalAlignment = VerticalAlignment.Center };
+                    DockPanel.SetDock(when, Dock.Left);
+                    row.Children.Add(when);
+                    var numbers = new TextBlock
+                    {
+                        Text = result == "failed" ? "" : Texts.Size(Json.Long(h, "bytes")) + " · " + Texts.F("dl_seconds", Json.Str(h, "seconds") ?? Convert.ToString(h["seconds"], System.Globalization.CultureInfo.InvariantCulture)),
+                        FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0),
+                    };
+                    DockPanel.SetDock(numbers, Dock.Right);
+                    row.Children.Add(numbers);
+                    var name = Json.Str(h, "name") ?? Texts.F("dl_unnamed", Json.Long(h, "mod"), Json.Long(h, "file"));
+                    var what = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                    var nameBox = Selectable.Text(name, 14);
+                    nameBox.FontWeight = FontWeights.SemiBold;
+                    what.Children.Add(nameBox);
+                    if (result == "failed") what.Children.Add(Selectable.Text(Why(Json.Str(h, "why")), 12, "Yellow"));
+                    row.Children.Add(what);
+                    table.Children.Add(Band(row, historyBand++, false));
+                }
+                const int Step = 40;
+                int built = 0;
+                void More() { foreach (var h in history.Skip(built).Take(Step)) AddRow(h); built = Math.Min(history.Count, built + Step); }
+                More();
+                table.Margin = new Thickness(0, 0, 12, 0);      // clear of the scroll bar
+                var scroll = new ScrollViewer
+                {
+                    Content = table, MaxHeight = 470, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Focusable = false,
+                };
+                scroll.ScrollChanged += (s, e) =>
+                {
+                    if (built < history.Count && scroll.VerticalOffset + scroll.ViewportHeight > scroll.ExtentHeight - 300) More();
+                };
+                Downloads.Children.Add(Card(scroll));
+                Downloads.Children.Add(new Border { Height = 20 });
+            }
+
+            // the mods that came from Nexus Mods
+            var fromNexus = st?.Mods.Where(m => m.NexusPage != null).ToList() ?? new List<ModRow>();
+            var nexusHead = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            if (fromNexus.Count > 0)
+            {
+                var how = SortBy(downloadSort, k => { downloadSort = k; RenderDownloads(); },
+                                 ("order", Texts.Get("sort_order")), ("name", Texts.Get("sort_name")));
+                DockPanel.SetDock(how, Dock.Right);
+                nexusHead.Children.Add(how);
+            }
+            nexusHead.Children.Add(new TextBlock { Text = Texts.Get("dl_from_nexus"), FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = B("Muted"), VerticalAlignment = VerticalAlignment.Center });
+            Downloads.Children.Add(nexusHead);
+            if (fromNexus.Count == 0) Downloads.Children.Add(Small(Texts.Get("dl_from_nexus_none"), new Thickness(0, 0, 0, 0)));
+            else
+            {
+                var list = new StackPanel();
+                int nexusBand = 0;
+                foreach (var m in downloadSort == "name" ? fromNexus.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList() : fromNexus)
+                {
+                    var row = new DockPanel { Margin = new Thickness(0, 6, 0, 6) };
+                    var page = m.NexusPage;
+                    var open = new Button { Content = Texts.Get("dl_open_page"), Style = (Style)FindResource("Ghost"), MinHeight = 32 };
+                    open.Click += (s, e) => Process.Start(new ProcessStartInfo(page) { UseShellExecute = true });
+                    DockPanel.SetDock(open, Dock.Right);
+                    row.Children.Add(open);
+                    var pic = Picture(m.Icon, GlyphMod, 44, m.Enabled ? "Blue" : "Muted");
+                    pic.Margin = new Thickness(0, 0, 14, 0);
+                    DockPanel.SetDock(pic, Dock.Left);
+                    row.Children.Add(pic);
+                    var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                    var nameBox = Selectable.Text(m.Name, 14);
+                    nameBox.FontWeight = FontWeights.SemiBold;
+                    words.Children.Add(nameBox);
+                    words.Children.Add(new TextBlock { Text = Texts.F("dl_mod_line", Num(m), m.NexusMod, Texts.Get(m.Enabled ? "dl_on" : "dl_off_word")), FontFamily = Mono, FontSize = 12, Foreground = B("Muted") });
+                    row.Children.Add(words);
+                    list.Children.Add(Band(row, nexusBand++));
+                }
+                Downloads.Children.Add(Card(list));
+            }
+        }
+#endif
 
         /// <summary>Why a download failed, in the window's words.</summary>
         static string Why(string kind)
         {
             switch (kind)
             {
+#if HAS_NEXUS
+                case "no_key": return Texts.Get("up_no_key");
+                case "nexus_refused": return Texts.Get("nx_refused");
+                case "nexus_offline": return Texts.Get("nx_offline");
+                case "nexus_busy": return Texts.Get("nx_busy");
+                case "nexus_missing": return Texts.Get("dl_missing");
+#endif
                 case "not_zip": return Texts.Get("dl_not_zip");
                 default: return kind ?? "";
             }
@@ -2281,6 +2516,9 @@ namespace QuickDeploy
             DownloadPage.Visibility = page == "download" ? Visibility.Visible : Visibility.Collapsed;
             StoragePage.Visibility = page == "storage" ? Visibility.Visible : Visibility.Collapsed;
             TagsPage.Visibility = page == "tags" ? Visibility.Visible : Visibility.Collapsed;
+#if HAS_NEXUS
+            if (page == "download") RenderDownloads();
+#endif
             if (page == "storage") RenderStorage();
             if (page == "tags") RenderTags();
         }
@@ -2292,6 +2530,9 @@ namespace QuickDeploy
 
         // how the two lists of mods are sorted (the user, 2026-10-24)
         string storageSort = "size";
+#if HAS_NEXUS
+        string downloadSort = "order";
+#endif
 
         /// <summary>The buttons that pick the order of a list: the one in use is lit.</summary>
         UIElement SortBy(string now, Action<string> pick, params (string Key, string Text)[] ways)
@@ -3085,8 +3326,84 @@ namespace QuickDeploy
                 return Texts.F(keep ? "mv_foot_copy" : "mv_foot_move", moved.Count, target);
             }), true).ContinueWith(t => Dispatcher.BeginInvoke(new Action(() => { if (summary != null) Dialog.Tell(this, summary); })));
         }
+#if HAS_NEXUS
+        /// <summary>A handler command's program, by its file name ("HD2Arsenal"); null without one.</summary>
+        static string Program(string h)
+        {
+            if (string.IsNullOrEmpty(h)) return null;
+            var m = System.Text.RegularExpressions.Regex.Match(h, "^\\s*\"?([^\"]+?\\.exe)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return m.Success ? IOPath.GetFileNameWithoutExtension(m.Groups[1].Value) : h;
+        }
+#endif
 
+#if HAS_NEXUS
+        /// <summary>The Nexus Mods card once Nexus Mods has issued this program's sign-in id: signed in
+        /// as whom, or the button that signs in (OAuth with PKCE, NexusOAuth). Our testing builds'
+        /// own way in is not offered then.</summary>
+        void SignInCard(StackPanel panel)
+        {
+            if (NexusOAuth.ClientId == null)
+            {
+                panel.Children.Add(Heading(Texts.Get("nx_out")));
+                panel.Children.Add(Small(Texts.Get("nx_no_client"), new Thickness(0, 8, 0, 0)));
+                return;
+            }
+            (string Name, bool Premium)? who = null;
+            try { if (NexusOAuth.SignedIn) who = NexusOAuth.Account(); }
+            catch (ModError) { }
+            var head = new DockPanel();
+            var dot = new Ellipse { Width = 10, Height = 10, Fill = B(who != null ? "Blue" : "Yellow"), Margin = new Thickness(0, 7, 10, 0), VerticalAlignment = VerticalAlignment.Top };
+            DockPanel.SetDock(dot, Dock.Left);
+            head.Children.Add(dot);
+            head.Children.Add(Heading(who == null ? Texts.Get("nx_out") : Texts.F(who.Value.Premium ? "nx_in_premium" : "nx_in", who.Value.Name)));
+            panel.Children.Add(head);
+            panel.Children.Add(Small(Texts.Get(who == null ? "nx_out_note" : "nx_in_note"), new Thickness(0, 8, 0, 0)));
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
+            if (who == null)
+            {
+                var signIn = new Button { Content = Texts.Get("nx_sign_in"), Style = (Style)FindResource("Primary"), MinHeight = 40 };
+                signIn.Click += async (s, e) => { await SignIn(); RenderDownloads(); };
+                row.Children.Add(signIn);
+            }
+            else
+            {
+                var signOut = new Button { Content = Texts.Get("nx_sign_out"), Style = (Style)FindResource("Ghost"), MinHeight = 40 };
+                signOut.Click += (s, e) => { if (Dialog.Ask(this, Texts.Get("nx_sign_out_ask"), Texts.Get("nx_sign_out"))) { NexusOAuth.Logout(); RenderDownloads(); } };
+                row.Children.Add(signOut);
+            }
+            panel.Children.Add(row);
+        }
 
+        /// <summary>The sign-in: Nexus Mods' page opened in the browser, the window waiting (five minutes
+        /// at most) for the player to allow it there. True when signed in.</summary>
+        async Task<bool> SignIn()
+        {
+            Foot(Texts.Get("nx_signing_in"), "Blue");
+            var r = await Task.Run(() => Cli.Call(() =>
+            {
+                var (name, premium) = NexusOAuth.Login(url => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }), TimeSpan.FromMinutes(5));
+                return Texts.F(premium ? "nx_in_premium" : "nx_in", name);
+            }));
+            Activate();
+            if (!r.Ok) { Dialog.Tell(this, Texts.F("nx_sign_in_failed", r.Message)); FootState(); return false; }
+            Foot(r.Out, "Blue");
+            return true;
+        }
+
+        /// <summary>The player's Nexus Mods account connected: the sign-in when this build has a
+        /// sign-in id; else, in our testing builds only, their own way in. True when connected.</summary>
+        async Task<bool> AskKey()
+        {
+            if (NexusOAuth.ClientId != null) return await SignIn();
+            Dialog.Tell(this, Texts.Get("nx_no_client"));
+            return false;
+        }
+#endif
+
+#if HAS_NEXUS
+        readonly Queue<string> links = new Queue<string>();
+        bool linking;
+#endif
 
         /// <summary>The window's pipe: a later start sends a line here, and the window comes forward.</summary>
         void Listen()
@@ -3117,8 +3434,62 @@ namespace QuickDeploy
         {
             if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
             Activate();
+#if HAS_NEXUS
+            if (string.IsNullOrEmpty(link)) return;
+            links.Enqueue(link);
+            if (!linking) TakeLinks();
+#endif
         }
 
+#if HAS_NEXUS
+        /// <summary>Each link in turn: another game's goes on to the program that had the
+        /// button before; Helldivers 2's is downloaded and put in the library.</summary>
+        async void TakeLinks()
+        {
+            linking = true;
+            try
+            {
+                while (links.Count > 0)
+                {
+                    var url = links.Dequeue();
+                    NxmLink link;
+                    try { link = NxmLink.Parse(url); }
+                    catch (ModError) { Dialog.Tell(this, Texts.F("nx_bad_link", url)); continue; }
+                    if (link.Game != Nexus.Game)
+                    {
+                        if (!Nexus.PassOn(url)) Dialog.Tell(this, Texts.F("nx_other_game", link.Game));
+                        continue;
+                    }
+                    if (Nexus.Credential() == null && !await AskKey()) continue;
+                    while (busy) await Task.Delay(200);
+                    downloading = Texts.F("dl_unnamed", link.Mod, link.File);
+                    ShowPage("download");
+                    long shown = 0;
+                    await Act(() => Cli.Call(() =>
+                    {
+                        var (mod, replaced) = Nexus.Install(link, Nexus.Credential(), (done, total) =>
+                        {
+                            // the footer, at most every 128 KB
+                            if (done - shown < 128 * 1024 && done != total) return;
+                            shown = done;
+                            Dispatcher.BeginInvoke(new Action(() =>
+                            {
+                                var text = total > 0 ? Texts.F("nx_progress", Texts.Size(done), Texts.Size(total), done * 100 / total)
+                                                     : Texts.F("nx_progress_n", Texts.Size(done));
+                                Foot(text, "Blue");
+                                if (progressText != null) progressText.Text = text;
+                            }));
+                        });
+                        return Texts.F(replaced ? "nx_replaced" : "nx_added", mod.Name);
+                    }), true);
+                    downloading = null;
+                    progressText = null;
+                    RenderDownloads();
+                }
+            }
+            finally { linking = false; }
+        }
+#endif
 
         // ---------------------------------------------------------------- the list
 
@@ -4436,7 +4807,12 @@ namespace QuickDeploy
                 checkedAs[u.ModId] = was[u.ModId];
             }
             int Count(string status, Func<UpdateInfo, bool> also = null) => found.Count(u => u.Status == status && (also == null || also(u)));
+#if HAS_NEXUS
+            int upd = Count("update"), noKey = Count("error", u => u.Why == "no_key"), err = Count("error", u => u.Why != "no_key"),
+                none = Count("no_source"), other = Count("no_check");
+#else
             int upd = Count("update"), err = Count("error"), none = Count("no_source"), other = Count("no_check");
+#endif
             Foot(Texts.F("up_foot", upd, Seconds(clock.Elapsed.TotalSeconds)), upd > 0 ? "Yellow" : "Blue");
             if (upd > 0)
             {
@@ -4446,10 +4822,21 @@ namespace QuickDeploy
             if (st != null) { RenderNav(); RenderList(); RenderDetail(); }
 
             var text = Texts.F("up_summary", found.Count, upd, Count("current"), Count("unknown"), none);
+#if HAS_NEXUS
+            if (noKey > 0) text += "\n\n" + Texts.F("up_summary_key", noKey);
+#endif
             if (other > 0) text += "\n\n" + Texts.F("up_summary_other", other);
             if (err > 0) text += "\n\n" + Texts.F("up_summary_err", err);
             if (none > 0) text += "\n\n" + Texts.Get("up_summary_source");
+#if HAS_NEXUS
+            if (noKey > 0)
+            {
+                if (Dialog.Choose(this, text, Texts.Get("up_set_key"), Texts.Get("ok")) == 0 && await AskKey()) Updates_Click(sender, e);
+            }
+            else Dialog.Tell(this, text);
+#else
             Dialog.Tell(this, text);
+#endif
         }
 
         // the mods whose own check is running: their row says so meanwhile
@@ -4562,7 +4949,11 @@ namespace QuickDeploy
                 case "current": text = Texts.Get("up_current"); colour = "Blue"; break;
                 case "no_source": text = Texts.Get("up_no_source"); break;
                 case "no_check": text = Texts.F("up_no_check", u.Channel); break;
+#if HAS_NEXUS
+                default: text = u.Why == "no_key" ? Texts.Get("up_no_key") : Texts.F("up_error", CheckWhy(u.Why)); colour = "Yellow"; break;
+#else
                 default: text = Texts.F("up_error", CheckWhy(u.Why)); colour = "Yellow"; break;
+#endif
             }
             // a GitHub release without an archive to download: its page only
             if (apply && m.Channel == "GitHub" && string.IsNullOrEmpty(u.Download)) apply = false;
@@ -4610,6 +5001,11 @@ namespace QuickDeploy
                 case "offline": return Texts.Get("up_why_offline");
                 case "missing": return Texts.Get("up_why_missing");
                 case "busy": return Texts.Get("up_why_busy");
+#if HAS_NEXUS
+                case "nexus_offline": return Texts.Get("up_why_offline");
+                case "nexus_busy": return Texts.Get("up_why_busy");
+                case "nexus_key": return Texts.Get("up_why_key");
+#endif
                 default: return Why(why);
             }
         }
@@ -4625,6 +5021,35 @@ namespace QuickDeploy
                 { updates.Remove(m.Id); updated.Add(m.Id); }
                 return;
             }
+#if HAS_NEXUS
+            if (Nexus.Credential() == null && !await AskKey()) return;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            long shown = 0;
+            var r = await Exec(() => Cli.Call(() =>
+            {
+                var link = new NxmLink { Game = Nexus.Game, Mod = m.NexusMod, File = u.LatestFile };
+                var (mod, _) = Nexus.Install(link, Nexus.Credential(), (done, total) =>
+                {
+                    if (done - shown < 128 * 1024 && done != total) return;
+                    shown = done;
+                    Dispatcher.BeginInvoke(new Action(() => Foot(total > 0 ? Texts.F("nx_progress", Texts.Size(done), Texts.Size(total), done * 100 / total)
+                                                                           : Texts.F("nx_progress_n", Texts.Size(done)), "Blue")));
+                });
+                return Texts.F("up_done", mod.Name, u.Latest);
+            }));
+            if (!r.Ok && r.Refused?.Kind == "nexus_refused")
+            {
+                Process.Start(new ProcessStartInfo(u.Page ?? m.Page) { UseShellExecute = true });
+                Dialog.Tell(this, Texts.Get(Nexus.IsOurs(Exe) ? "up_nexus_page" : "up_nexus_page_manual"));
+            }
+            else if (!Refused(r) && r.Ok)
+            {
+                lastDone = Texts.F("took", Last(r.Out), Seconds(clock.Elapsed.TotalSeconds));
+                updates.Remove(m.Id);
+                updated.Add(m.Id);
+            }
+            Refresh();
+#endif
         }
 
         /// <summary>Where a mod comes from, typed in: a Nexus Mods page, a GitHub repository or release, another page.</summary>
@@ -4660,6 +5085,9 @@ namespace QuickDeploy
             if (busy) return;
             var many = Taken(m).Where(x => x.Channel == "Nexus Mods" || x.Channel == "GitHub").ToList();
             if (many.Count == 0) { Dialog.Tell(this, Texts.Get("match_no_source")); return; }
+#if HAS_NEXUS
+            if (many.Any(x => x.Channel == "Nexus Mods") && Nexus.Credential() == null && !await AskKey()) return;
+#endif
             var ids = many.Select(x => x.Id).ToList();
             var r = await Exec(() => Cli.Call(() =>
             {

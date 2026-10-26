@@ -29,7 +29,11 @@ namespace Hd2Mod
         const string File = "self_update.json";
         const long Day = 24 * 3600;
 
+#if HAS_NEXUS
+        public const bool Official = true;
+#else
         public const bool Official = false;
+#endif
 
         /// <summary>A tag's version as numbers: "v0.9.0", "0.9", "v1.2.3-dev" -> [0,9,0]...; null when it has none.</summary>
         public static int[] Numbers(string tag)

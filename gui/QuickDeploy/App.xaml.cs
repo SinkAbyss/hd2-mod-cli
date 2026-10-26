@@ -20,12 +20,19 @@ namespace QuickDeploy
                                         .Take(6).Select(b => b.ToString("x2")));
         }
 
+#if HAS_NEXUS
+        /// <summary>A Nexus download link this start was given (nxm://...), for the window.</summary>
+        public static string StartLink;
+#endif
 
         static System.Threading.Mutex single;
 
         /// <summary>One window: a start while it runs brings it forward and ends.</summary>
         protected override void OnStartup(StartupEventArgs e)
         {
+#if HAS_NEXUS
+            StartLink = e.Args.FirstOrDefault(a => a.StartsWith("nxm://", StringComparison.OrdinalIgnoreCase));
+#endif
             // the first window holds this; a second start knows at once (no wait on the pipe)
             single = new System.Threading.Mutex(true, Pipe, out bool first);
             if (!first)
@@ -35,7 +42,11 @@ namespace QuickDeploy
                     using (var c = new NamedPipeClientStream(".", Pipe, PipeDirection.Out))
                     {
                         c.Connect(5000);
+#if HAS_NEXUS
+                        var bytes = Encoding.UTF8.GetBytes((StartLink ?? "") + "\n");
+#else
                         var bytes = Encoding.UTF8.GetBytes("\n");
+#endif
                         c.Write(bytes, 0, bytes.Length);
                         c.Flush();
                     }

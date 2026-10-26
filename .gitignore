@@ -5,3 +5,9 @@ release/
 *.user
 .vs/
 
+#if HAS_NEXUS
+# marks a build made by the author: Nexus Mods is only in those
+official.txt
+#endif
+# the client id Nexus Mods issued to an application: each build of it has its own
+nexus_client_id.txt

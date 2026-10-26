@@ -42,7 +42,23 @@ namespace Hd2Mod
 
         static SiteInfo FromNexus(NexusRef r)
         {
+#if !HAS_NEXUS
             throw new ModError("this build was made without Nexus Mods support", "no_nexus");
+#else
+            var key = Nexus.Credential();
+            if (string.IsNullOrEmpty(key)) throw new ModError("checking Nexus Mods needs you signed in to it", "no_key");
+            var d = Json.Parse(Nexus.Api("/v1/games/" + r.Game + "/mods/" + r.Mod + ".json", key)) as Dictionary<string, object>;
+            if (d == null) throw new ModError("Nexus Mods answered nothing about mod " + r.Mod, "nexus_error");
+            return new SiteInfo
+            {
+                Name = Json.Str(d, "name"),
+                Author = Json.Str(d, "author") ?? Json.Str(d, "uploaded_by"),
+                Summary = Clean(Json.Str(d, "summary")),
+                Picture = Json.Str(d, "picture_url"),
+                Version = Json.Str(d, "version"),
+                Updated = Json.Long(d, "updated_timestamp"),
+            };
+#endif
         }
 
         static SiteInfo FromGitHub(GitHubRef r)

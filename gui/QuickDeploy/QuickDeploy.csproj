@@ -29,6 +29,27 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
+    <!-- #if HAS_NEXUS -->
+  <!-- Our own builds are the ones made where official.txt sits beside build.bat: that file is
+       not in the repository, so a build anyone else makes identifies itself as unofficial and
+       leaves Nexus Mods out (its API has to be registered per application). -p:WithNexus=true
+       puts it back in; -p:NoNexus=true takes it out of ours. Signing in to Nexus Mods needs the
+       client id Nexus Mods issues to each registered application: it is read from
+       nexus_client_id.txt beside build.bat, which is not in the repository either. -->
+  <PropertyGroup>
+    <_Official Condition="Exists('$(MSBuildThisFileDirectory)..\..\official.txt')">true</_Official>
+    <_HasNexus Condition="'$(_Official)' == 'true' or '$(WithNexus)' == 'true'">true</_HasNexus>
+    <_HasNexus Condition="'$(NoNexus)' == 'true'"></_HasNexus>
+    <DefineConstants Condition="'$(_HasNexus)' == 'true'">$(DefineConstants);HAS_NEXUS</DefineConstants>
+    <NexusClientId Condition="'$(_HasNexus)' == 'true' and Exists('$(MSBuildThisFileDirectory)..\..\nexus_client_id.txt')">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\nexus_client_id.txt').Trim())</NexusClientId>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(NexusClientId)' != ''">
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>NexusClientId</_Parameter1>
+      <_Parameter2>$(NexusClientId)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+    <!-- #endif -->
 
   <!-- a build with another output path (the no-nexus build) must still ignore the
        default obj\ and bin\, or their generated files are compiled twice -->
