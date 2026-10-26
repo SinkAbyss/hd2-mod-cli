@@ -252,11 +252,12 @@
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="Foreground" Value="{StaticResource Ink}"/>
       <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Padding" Value="12,0"/>
       <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="b" Background="Transparent" Padding="12,0" MinHeight="36">
+            <Border x:Name="b" Background="Transparent" Padding="{TemplateBinding Padding}" MinHeight="36">
               <ContentPresenter VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
@@ -494,6 +495,30 @@
                 <Track.Thumb><Thumb Style="{StaticResource ThumbSquare}"/></Track.Thumb>
               </Track>
             </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- text that can be selected and copied (Selectable.Text), drawn like a TextBlock: no frame,
+         no caret, no scroll host (a Decorator), so the mouse wheel still scrolls the page -->
+    <Style x:Key="Copyable" TargetType="TextBox">
+      <Setter Property="IsReadOnly" Value="True"/>
+      <Setter Property="IsReadOnlyCaretVisible" Value="False"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <!-- WPF's text box draws its text 2 px in from each side (measured 2026-10-26): -2 puts it
+           where a TextBlock's would be, so the edges line up with the text and buttons around it -->
+      <Setter Property="Padding" Value="-2,0,-2,0"/>
+      <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+      <Setter Property="SelectionBrush" Value="{StaticResource Blue}"/>
+      <Setter Property="SelectionOpacity" Value="0.45"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TextBox">
+            <Decorator x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
           </ControlTemplate>
         </Setter.Value>
       </Setter>

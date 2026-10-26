@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -32,6 +33,11 @@ namespace QuickDeploy
         readonly HashSet<string> picked = new HashSet<string>();
         bool busy, overMax, acrylic, descOpen, checking;
         string lastDone;
+        /// <summary>The loader panel's i button: it opens the details (LoaderInfo).</summary>
+        FrameworkElement loaderInfoBtn;
+        /// <summary>The details, while open: the left column is drawn anew on every state, and the popup
+        /// follows the new i button (it jumped to the column's corner when its button left: the user, 2026-10-26).</summary>
+        System.Windows.Controls.Primitives.Popup loaderPop;
         // the last update check, by mod id (kept while the window is open)
         readonly Dictionary<string, UpdateInfo> updates = new Dictionary<string, UpdateInfo>();
         string startWith = Arg("--select");
@@ -91,6 +97,17 @@ namespace QuickDeploy
             // that bubbles here too: only the list's own loss ends the drag
             ListArea.LostMouseCapture += (s, e) => { if (!ReferenceEquals(Mouse.Captured, ListArea)) EndDrag(false); };
             PreviewKeyDown += (s, e) => { if (dragRow != null && e.Key == Key.Escape) { EndDrag(false); e.Handled = true; } };
+            // the loader panel's details close like a menu (LoaderInfo)
+            PreviewKeyDown += (s, e) => { if (e.Key == Key.Escape && loaderPop != null && loaderPop.IsOpen) { CloseLoaderInfo(); e.Handled = true; } };
+            PreviewTextInput += TypeToSearch;
+            PreviewMouseDown += (s, e) =>
+            {
+                pressClosedInfo = loaderPop != null && loaderPop.IsOpen;
+                CloseLoaderInfo();
+            };
+            Deactivated += (s, e) => CloseLoaderInfo();
+            LocationChanged += (s, e) => CloseLoaderInfo();
+            SizeChanged += (s, e) => CloseLoaderInfo();
             edgeScroll.Tick += (s, e) =>
             {
                 if (dragRow == null) { edgeScroll.Stop(); return; }
@@ -154,6 +171,7 @@ namespace QuickDeploy
             Mark("window loaded");
             LuaMods.Lazy = true;                       // the list first; the mods' scripts after (WarmLua)
             Watch();
+            LoadFilters();
             ShowSaved();
             Refresh();
             ClickTest();
@@ -249,6 +267,175 @@ namespace QuickDeploy
                     Change(m.Id, c => c.Enabled = !c.Enabled, m.Enabled ? "disable" : "enable", m.Id);
                 };
                 t9.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "typesearch")
+            {
+                // "typesearch": a row of the list focused, then "12" and "a" typed as text arrives
+                // from the keyboard; a lone space after; what the search holds goes to HD2QD_WHEEL_OUT
+                var t17 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                t17.Tick += (s, e) =>
+                {
+                    t17.Stop();
+                    var row = List.Children.Count > 2 ? List.Children[2] as UIElement : List;
+                    row.Focusable = true;
+                    row.Focus();
+                    var before = Keyboard.FocusedElement?.GetType().Name;
+                    // a lone space first: it must stay where it is
+                    TextCompositionManager.StartComposition(new TextComposition(InputManager.Current, Keyboard.FocusedElement, " "));
+                    var afterSpace = "[" + SearchBox.Text + "] focused " + SearchBox.IsKeyboardFocused;
+                    foreach (var text in new[] { "12", "a", " " })
+                        TextCompositionManager.StartComposition(new TextComposition(InputManager.Current, Keyboard.FocusedElement, text));
+                    var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                    if (path != null)
+                        File.WriteAllText(path, "focus before " + before + "\nafter a lone space " + afterSpace + "\nsearch [" + SearchBox.Text + "]\nfocused " + SearchBox.IsKeyboardFocused +
+                                          "\ncaret " + SearchBox.CaretIndex + "\n");
+                };
+                t17.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "fling")
+            {
+                // "fling": six turns down 40 ms apart on a row of the list, as a fast wheel does; then
+                // whether the button shows, and where, go to HD2QD_WHEEL_OUT
+                var t16 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                t16.Tick += (s, e) =>
+                {
+                    t16.Stop();
+                    ListScroll.ScrollToTop();
+                    UpdateLayout();
+                    var row = List.Children.Count > 2 ? List.Children[2] as UIElement : List;
+                    int n = 0, at = Environment.TickCount;
+                    var turn = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
+                    turn.Tick += (s2, e2) =>
+                    {
+                        row.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, at + 40 * n, -120) { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+                        if (++n < 6) return;
+                        turn.Stop();
+                        var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                        if (path != null)
+                            File.WriteAllText(path, "shown " + (flingBtn != null) + "\ndir " + flingDir +
+                                              "\nat " + (flingBtn == null ? "-" : Canvas.GetLeft(flingBtn) + "," + Canvas.GetTop(flingBtn)) +
+                                              "\noffset " + ListScroll.VerticalOffset + "\n");
+                    };
+                    turn.Start();
+                };
+                t16.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "loadercopy")
+            {
+                // "loadercopy": the details open, a line in them selected and its copy menu opened, as a
+                // right click does; whether the details stay open goes to HD2QD_WHEEL_OUT
+                var t14 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                t14.Tick += (s, e) =>
+                {
+                    t14.Stop();
+                    if (loaderInfoBtn == null) return;
+                    LoaderInfo(loaderInfoBtn);
+                    var boxes = new List<TextBox>();
+                    void Walk(DependencyObject d)
+                    {
+                        if (d is TextBox tb) boxes.Add(tb);
+                        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(d); i++) Walk(VisualTreeHelper.GetChild(d, i));
+                    }
+                    loaderPop.Child.UpdateLayout();
+                    Walk(loaderPop.Child);
+                    var line = boxes.Last();
+                    line.Focus();
+                    line.Select(0, 4);
+                    line.ContextMenu.PlacementTarget = line;
+                    line.ContextMenu.IsOpen = true;
+                    var t15 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    t15.Tick += (s2, e2) =>
+                    {
+                        t15.Stop();
+                        var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                        if (path != null)
+                            File.WriteAllText(path, "lines " + boxes.Count + "\npopup " + loaderPop.IsOpen + "\nmenu " + line.ContextMenu.IsOpen +
+                                                    "\nselected " + line.SelectedText + "\nfirst " + boxes[0].Text + "\n");
+                    };
+                    t15.Start();
+                };
+                t14.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "loaderswitch")
+            {
+                // "loaderswitch": the loader in effect chosen again, as a click on a ring does (the
+                // choice does not change), for the picture of the switching line
+                var t13 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                t13.Tick += (s, e) => { t13.Stop(); ChooseLoader(st?.Mods.FirstOrDefault(x => x.Id == st.LoaderChoice)); };
+                t13.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "loaderinfo")
+            {
+                // "loaderinfo": the loader panel's details open, for their picture
+                var t12 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                t12.Tick += (s, e) =>
+                {
+                    t12.Stop();
+                    if (loaderInfoBtn != null) LoaderInfo(loaderInfoBtn);
+                    var again = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    again.Tick += (s2, e2) => { again.Stop(); RenderNav(); };
+                    again.Start();
+                };
+                t12.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "detail_end")
+            {
+                // "detail_end": the chosen mod's details scrolled to the bottom, for their picture
+                var t11 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                t11.Tick += (s, e) => { t11.Stop(); DetailScroll.ScrollToEnd(); };
+                t11.Start();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "copy")
+            {
+                // "copy": the chosen mod's copyable texts, copied the three ways a player does it
+                // (all with Ctrl+C, the menu with nothing selected, the menu with a part selected),
+                // and a turn of the mouse wheel over one, which must still scroll the details
+                var t10 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+                t10.Tick += (s, e) =>
+                {
+                    t10.Stop();
+                    var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                    if (path == null) return;
+                    var found = new List<TextBox>();
+                    void Walk(DependencyObject o)
+                    {
+                        if (o is TextBox tb && tb.Style == FindResource("Copyable")) found.Add(tb);
+                        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(o); i++) Walk(VisualTreeHelper.GetChild(o, i));
+                    }
+                    Walk(Detail);
+                    string Clip() { try { return Clipboard.GetText(); } catch (Exception) { return "?"; } }
+                    void ByMenu(TextBox tb) { var item = (MenuItem)tb.ContextMenu.Items[0]; item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)); }
+                    var lines = new List<string> { "found=" + found.Count };
+                    foreach (var tb in found)
+                    {
+                        tb.SelectAll();
+                        ApplicationCommands.Copy.Execute(null, tb);
+                        string all = Clip();
+                        tb.Select(0, 0);
+                        ByMenu(tb);
+                        string menu = Clip();
+                        tb.Select(0, Math.Min(4, tb.Text.Length));
+                        ByMenu(tb);
+                        string part = Clip();
+                        tb.Select(0, 0);
+                        lines.Add("text=" + tb.Text.Replace("\n", "\\n") + "\r\n ctrl_c=" + (all == tb.Text) + " menu_all=" + (menu == tb.Text) + " menu_part=" + (part == tb.Text.Substring(0, Math.Min(4, tb.Text.Length))));
+                    }
+                    var target = found.LastOrDefault();
+                    double before = DetailScroll.VerticalOffset;
+                    if (target != null)
+                        target.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120) { RoutedEvent = UIElement.MouseWheelEvent });
+                    DetailScroll.UpdateLayout();
+                    lines.Add("wheel_scrolled=" + (DetailScroll.VerticalOffset > before) + " (" + before + " -> " + DetailScroll.VerticalOffset + ")");
+                    try { File.WriteAllText(path, string.Join("\r\n", lines) + "\r\n"); } catch (IOException) { }
+                };
+                t10.Start();
                 return;
             }
             if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "where")
@@ -824,10 +1011,17 @@ namespace QuickDeploy
             try { Directory.CreateDirectory(home); }               // a first start: nothing saved yet
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return; }
             watcher = new FileSystemWatcher(home, "*.json") { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName };
-            FileSystemEventHandler h = (s, e) => Dispatcher.BeginInvoke(new Action(() => { settle.Stop(); settle.Start(); }));
+            // only the files that hold the state: the caches the state read writes itself
+            // (crash_sites, lua_scan, same) and the window's own files never start another read
+            FileSystemEventHandler h = (s, e) =>
+            {
+                if (!StateFiles.Contains(IOPath.GetFileName(e.FullPath ?? ""))) return;
+                Dispatcher.BeginInvoke(new Action(() => { settle.Stop(); settle.Start(); }));
+            };
             watcher.Changed += h;
             watcher.Created += h;
             watcher.Renamed += (s, e) => h(s, e);
+            watcher.Deleted += h;
             // it dies silently on an overflow or when the folder is taken away: without this a
             // window left open would never see another change (the user, 2026-10-25)
             watcher.Error += (s, e) => Dispatcher.BeginInvoke(new Action(() =>
@@ -855,6 +1049,12 @@ namespace QuickDeploy
 
         readonly DispatcherTimer beat = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         string beatSaw;
+
+        /// <summary>The files whose change is a change of the state the window shows.</summary>
+        static readonly HashSet<string> StateFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "library.json", "deployed.json", "deploying.json", "config.json",
+        };
 
         /// <summary>The size and time of the library and the deploy record, as one string.</summary>
         static string Written()
@@ -1160,6 +1360,12 @@ namespace QuickDeploy
                     ChooseGame();
                     return true;
                 case "duplicate": Dialog.Tell(this, Texts.F("add_dupe", r.Refused.Arg)); break;
+                // a folder of mods, not a mod: offered as a library folder, whose mods come in one by
+                // one, through their manager's list when it has one (players, 2026-10-26)
+                case "library_folder":
+                    if (Dialog.Ask(this, Texts.F("add_library_folder", r.Refused.Arg), Texts.Get("add_library_folder_do")))
+                        AddLibraryFolder(r.Refused.Arg);
+                    return true;
                 case "game_running": Dialog.Tell(this, Texts.Get("game_running")); break;
                 case "protected": Dialog.Tell(this, Texts.F("del_protected", r.Refused.Arg)); break;
                 case "shared": Dialog.Tell(this, Texts.F("del_shared", r.Refused.Arg)); break;
@@ -1209,8 +1415,59 @@ namespace QuickDeploy
         // while the library cannot be read, it is tried again until it can
         readonly DispatcherTimer again = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
 
+        /// <summary>The bottom line: what was just done, else whether the game folder matches the library.</summary>
+        void FootState()
+        {
+            if (st == null) return;
+            if (st.GameDir == null) Foot(Texts.Get("no_game"), "Yellow");
+            // another program is writing to the game folder: what was just read is a state on
+            // its way somewhere, and its numbers are nobody's fault (the user, 2026-10-25)
+            else if (st.Deploying != null) Foot(Texts.F("deploy_busy", st.Deploying.Since), "Yellow");
+            // files a deploy would leave alone that are not what it thinks they are: an
+            // interrupted deploy, another manager, an antivirus. Said before anything else,
+            // because nothing else here is true while it holds. What a deploy is on its way to
+            // put right is not said here: the Deploy button already counts that (the user,
+            // 2026-10-25: a library waiting to be deployed is not a fault)
+            else if (st.Check.Wrong > 0) Foot(Texts.F("mismatch", st.Check.Wrong), "Yellow");
+            else if (lastDone != null) Foot(Texts.F("done", lastDone), "Blue");
+            else if (st.Pending == 0) Foot(Texts.Get("synced"), "Blue");
+            else Foot(Texts.F("pending", st.Written, st.Moved, st.Deleted, Texts.Size(st.CopiedBytes)), "Yellow");
+            lastDone = null;
+        }
+
+        // after a launch, the bottom line says the game runs while it does and goes back to the
+        // library's state when it closes, or when no game appeared within three minutes (the user,
+        // 2026-10-26: "正在通过 Steam 启动游戏" was still there after the game had quit). Asked every
+        // 5 s while the window watches, which is only after a launch
+        DispatcherTimer gameWatch;
+
+        void WatchGame()
+        {
+            gameWatch?.Stop();
+            bool seen = false;
+            var started = DateTime.UtcNow;
+            gameWatch = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            gameWatch.Tick += (s, e) =>
+            {
+                bool running = Hd2Mod.Deploy.GameRunning();
+                if (running && !seen)
+                {
+                    seen = true;
+                    Foot(Texts.Get("game_running"), "Blue");
+                }
+                else if (!running && (seen || DateTime.UtcNow - started > TimeSpan.FromMinutes(3)))
+                {
+                    gameWatch.Stop();
+                    gameWatch = null;
+                    FootState();
+                }
+            };
+            gameWatch.Start();
+        }
+
         void Foot(string text, string colour)
         {
+            if (FootText.ContextMenu == null) Selectable.Menu(FootText, () => FootText.Text);
             FootText.Text = text;
             FootText.Foreground = B(colour == "Muted" ? "Ink" : colour);
             FootDot.Fill = B(colour);
@@ -1233,7 +1490,12 @@ namespace QuickDeploy
 
         /// <summary>In what the list shows: the profile in use, or with the library on show (or
         /// profiles off) every mod.</summary>
-        bool InScope(ModRow m) => st == null || !st.ProfilesOn || viewLibrary || m.InProfile;
+        /// <summary>A mod's number as the list shows it: the loaders, which are not in it, are not
+        /// counted (they go last in a deploy whatever their place).</summary>
+        int Num(ModRow m) => m.Index - (st?.Mods.Count(x => x.Loader && x.Index < m.Index) ?? 0);
+
+        // a loader is not in the list: the panel on the left holds the loaders (the user, 2026-10-26)
+        bool InScope(ModRow m) => st == null || (!m.Loader && (!st.ProfilesOn || viewLibrary || m.InProfile));
 
         /// <summary>A profile's name as shown: the first one's in the window's language.</summary>
         static string ProfileName(string name) => name == Profiles.First ? Texts.Get("pf_default") : name;
@@ -1273,7 +1535,7 @@ namespace QuickDeploy
         /// <summary>The library's loaders of these kinds, by name and version; one that is off says so.</summary>
         string[] LibraryLoaders(string[] kinds) =>
             st.Mods.Where(x => x.Lu?.Loader != null && kinds.Contains(x.Lu.Loader))
-                   .Select(x => LoaderLabel(x.Lu.Loader, x.Lu.LoaderVersion) + (x.Enabled ? "" : Texts.Get("lua_off_suffix")))
+                   .Select(x => LoaderLabel(x.Lu.Loader, x.Lu.LoaderVersion) + (x.Id == st.LoaderChoice ? "" : x.Id == st.LoaderHelper ? Texts.Get("lua_helping_suffix") : Texts.Get("lua_off_suffix")))
                    .Distinct().ToArray();
 
         /// <summary>The loader running now, by name; null when none.</summary>
@@ -1323,28 +1585,34 @@ namespace QuickDeploy
                 Text = text, TextWrapping = TextWrapping.Wrap, Foreground = B(colour), Margin = new Thickness(0, 2, 0, 2),
                 FontWeight = strong ? FontWeights.SemiBold : FontWeights.Normal,
             });
+            // a line with a name or an error in it: it can be copied (the user, 2026-10-26); whole,
+            // when the screen shows only its first line, is what right-click -> Copy takes
+            void CopyLine(string text, string colour, string whole = null)
+            {
+                var t = Selectable.Text(text, 14, colour);
+                t.Margin = new Thickness(0, 2, 0, 2);
+                if (whole != null) Selectable.Menu(t, () => t.SelectionLength > 0 ? t.SelectedText : whole);
+                box.Children.Add(t);
+            }
             var running = RunningLabel();
             var owner = ById(st.Lua.BootOwner);
             // a loader, or a mod with a boot of its own: whose start-up script the game runs
             if (lu.Loader != null) Line(Texts.F("lua_loader", LoaderLabel(lu.Loader, lu.LoaderVersion)), "Ink", true);
-            if (lu.Boot != null)
+            // a boot that only starts its own mod: Boot Mod Loader runs it, off the slot
+            if (lu.Guest)
+            {
+                var host = ById(st.Lua.BootOwner);
+                Line(Texts.F("lua_guest", host != null ? LoaderLabel("bml", host.Lu?.LoaderVersion) : "Boot Mod Loader"), "Muted");
+            }
+            else if (lu.ChefRuns) Line(Texts.Get("lua_chef_runs"), "Muted");
+            else if (lu.Boot != null)
             {
                 if (lu.Loader == null) Line(Texts.Get("lua_own_boot"), "Ink", true);
                 if (!m.Enabled) { }
                 else if (owner?.Id == m.Id) Line(Texts.Get("lua_boot_runs"), "Blue");
-                else if (owner != null)
-                {
-                    Line(Texts.F("lua_boot_off", owner.Name), "Yellow");
-                    // the player decides whose runs: this one goes right after the one running now
-                    var use = new Button
-                    {
-                        Content = Texts.Get("lua_boot_use"), Style = (Style)FindResource("Ghost"), MinHeight = 34,
-                        HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 4), ToolTip = Texts.F("lua_boot_use_tip", owner.Name),
-                    };
-                    var after = owner.Id;
-                    use.Click += (s, e) => Run("move", m.Id, "--after", after);
-                    box.Children.Add(use);
-                }
+                // the loader in effect always goes last (Loaders): no place in the list changes that,
+                // so there is no button to move this one after it any more
+                else if (owner != null) Line(Texts.F("lua_boot_off", owner.Name), "Yellow");
             }
             // what starts it: only the loaders the library has, never a list of every loader
             // there is (the user, 2026-10-26: others may come)
@@ -1352,7 +1620,8 @@ namespace QuickDeploy
             {
                 var able = LibraryLoaders(lu.Needs == "chef" ? new[] { "chef" } : new[] { "bml", "chef", "bsl" });
                 if (lu.Needs == "chef")
-                    Line(Texts.F(able.Length > 0 ? (lu.NeedsWhy == "declared" ? "lua_needs_chef_declared" : "lua_needs_chef_have") : (lu.NeedsWhy == "declared" ? "lua_needs_chef_declared_none" : "lua_needs_chef_none"),
+                    Line(Texts.F((lu.NeedsWhy == "declared" ? "lua_needs_chef_declared" : lu.NeedsWhy == "api" ? "lua_needs_chef_api" : able.Length > 0 ? "lua_needs_chef_have" : "lua_needs_chef")
+                                 + (able.Length > 0 ? "" : "_none"),
                                  string.Join("、", able)), "Muted");
                 else Line(able.Length > 0 ? Texts.F("lua_needs_any_have", string.Join("、", able)) : Texts.Get("lua_needs_any_none"), "Muted");
                 if (m.Enabled)
@@ -1363,42 +1632,84 @@ namespace QuickDeploy
                         Line(st.Lua.Running == "other" && owner != null ? Texts.F("lua_other_boot", owner.Name) : Texts.Get("lua_no_loader"), "Yellow");
                     else if (issues.Any(i => i.Kind == "needs_chef"))
                         Line(Texts.F("lua_wrong_loader", running ?? "-"), "Yellow");
-                    else if (running != null) Line(Texts.F("lua_running", running), "Muted");
+                    // started by Chef Shared Loader, which reads no script over 4 MB (2026-10-26)
+                    if (issues.Any(i => i.Kind == "too_big_for_chef")) Line(Texts.F("lua_too_big", Texts.Size(lu.Biggest)), "Yellow");
+                    // the loader in effect is not repeated here: the card on the left says it (the user, 2026-10-26)
                     if (same.Kind != null)
                     {
                         var winner = ById(same.Mods[0]);
-                        if (same.Mods[0] != m.Id) Line(Texts.F("lua_same_name", winner?.Name ?? "?", same.Detail), "Yellow");
-                        else Line(Texts.F("lua_same_name_wins", string.Join(", ", same.Mods.Skip(1).Select(id => ById(id)?.Name ?? "?")), same.Detail), "Muted");
+                        if (same.Mods[0] != m.Id) CopyLine(Texts.F("lua_same_name", winner?.Name ?? "?", same.Detail), "Yellow");
+                        else CopyLine(Texts.F("lua_same_name_wins", string.Join(", ", same.Mods.Skip(1).Select(id => ById(id)?.Name ?? "?")), same.Detail), "Muted");
                     }
                 }
             }
-            // what the game's Lua cannot run: what each script uses, then on what that rests, said as
-            // what holds now (the game's Lua since the update, the loaders the library has), not as
-            // what can never change (the user, 2026-10-26)
+            // its scripts by the names the loader's log and Mod Lag Watchdog print (mods/author/name),
+            // whole, so a name from a log can be matched to the mod (the user, 2026-10-26). Each name
+            // once: a script the game's Lua cannot run says why beneath its name, then one short
+            // sentence on just what they use: the game does not provide it at present, nor do the
+            // library's loaders (no update dates or Lua versions)
+            var names = lu.Scripts.Concat(lu.Broken.Select(b => b.Script)).Distinct().ToList();
+            foreach (var name in names)
+            {
+                var dp = new DockPanel { Margin = new Thickness(0, 1, 0, 1) };
+                var dot = new TextBlock { Text = "· ", FontSize = 12, Foreground = B("Ink") };
+                DockPanel.SetDock(dot, Dock.Left);
+                dp.Children.Add(dot);
+                var col = new StackPanel();
+                col.Children.Add(Selectable.Text(name, 12));
+                foreach (var b in lu.Broken.Where(x => x.Script == name))
+                {
+                    string why;
+                    if (b.Message != null)
+                        why = b.Kind != null && b.Kind != "syntax" && Texts.Has("lua_kind_" + b.Kind) ? Texts.F("lua_kind_" + b.Kind, b.Script, b.Line)
+                            : Texts.F("lua_broken_line", b.Script, b.Line, b.Message);
+                    else if (b.LuaJitBytecode) why = Texts.F("lua_kind_bytecode", b.Script);
+                    else why = Texts.F("lua_broken_uses", b.Script, string.Join(Texts.Zh ? "、" : ", ", b.Jit.Select(j => Texts.Get("lua_lib_" + j))));
+                    var tb = new DockPanel();
+                    var cannot = new TextBlock { Text = Texts.Get("lua_broken") + (Texts.Zh ? "" : " "), FontSize = 12, Foreground = B("Red"), FontWeight = FontWeights.SemiBold };
+                    DockPanel.SetDock(cannot, Dock.Left);
+                    tb.Children.Add(cannot);
+                    tb.Children.Add(Selectable.Text(why, 12));
+                    // a line from the script's name down to its reason, so the reason is not read
+                    // as the next script's (the user, 2026-10-26)
+                    var reason = new DockPanel { Margin = new Thickness(0, 1, 0, 0) };
+                    var hook = new Border
+                    {
+                        // the same gap above (below the name) as on the right (before the reason):
+                        // 4 px each, measured (the user, 2026-10-26: -5 touched the name); the
+                        // corner at the middle of the reason's first line
+                        Width = 8, Height = 9, BorderBrush = B("Muted"), BorderThickness = new Thickness(1, 0, 0, 1),
+                        VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(3, -1, 4, 0),
+                    };
+                    DockPanel.SetDock(hook, Dock.Left);
+                    reason.Children.Add(hook);
+                    reason.Children.Add(tb);
+                    col.Children.Add(reason);
+                }
+                dp.Children.Add(col);
+                box.Children.Add(dp);
+            }
             if (lu.Broken.Count > 0)
             {
-                Line(Texts.Get("lua_broken"), "Red", true);
-                foreach (var b in lu.Broken)
-                {
-                    string text;
-                    if (b.Message != null)
-                        text = b.Kind != null && b.Kind != "syntax" && Texts.Has("lua_kind_" + b.Kind) ? Texts.F("lua_kind_" + b.Kind, b.Script, b.Line)
-                             : Texts.F("lua_broken_line", b.Script, b.Line, b.Message);
-                    else if (b.LuaJitBytecode) text = Texts.F("lua_kind_bytecode", b.Script);
-                    else text = Texts.F("lua_broken_uses", b.Script, string.Join("、", b.Jit.Select(j => Texts.Get("lua_use_" + j))));
-                    box.Children.Add(new TextBlock { Text = "· " + text, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = B("Ink"), Margin = new Thickness(0, 1, 0, 1) });
-                }
-                bool libs = lu.Broken.Any(b => b.Jit.Count > 0), code = lu.Broken.Any(b => b.Message != null || b.LuaJitBytecode);
+                var used = lu.Broken.SelectMany(b => b.Jit).Distinct().ToList();
+                int code = lu.Broken.Where(b => b.Message != null).Select(b => b.Script).Distinct().Count();
+                bool bytecode = lu.Broken.Any(b => b.Message == null && b.LuaJitBytecode);
+                string sep = Texts.Zh ? "、" : ", ";
+                // what the game lacks, as clauses of one sentence: only what the scripts use
+                var clauses = new List<string>();
+                if (code > 0) clauses.Add(Texts.Get(code > 1 ? "lua_clause_code_n" : "lua_clause_code"));
+                if (bytecode) clauses.Add(Texts.Get("lua_clause_bytecode"));
+                if (used.Count > 0) clauses.Add(Texts.F("lua_clause_libs", string.Join(sep, used.Select(j => Texts.Get("lua_lib_" + j)))));
+                string lacks = Texts.Zh ? string.Join("，", clauses)
+                             : clauses.Count == 1 ? clauses[0] : string.Join(", ", clauses.Take(clauses.Count - 1)) + " and " + clauses.Last();
                 var basis = new List<string>();
-                if (code) basis.Add(Texts.Get("lua_basis_code"));
-                if (libs)
+                // each loader in the library, as far as it is known what it gives, only for the libraries
+                var known = st.Mods.Where(x => x.Lu?.Loader == "bml" || x.Lu?.Loader == "chef").Select(x => LoaderLabel(x.Lu.Loader, x.Lu.LoaderVersion)).Distinct().ToList();
+                basis.Add(used.Count > 0 && known.Count > 0 ? Texts.F("lua_basis_loaders", lacks, string.Join(sep, known)) : Texts.F("lua_basis", lacks));
+                if (used.Count > 0)
                 {
-                    basis.Add(Texts.Get("lua_basis_libs"));
-                    // each loader in the library, as far as it is known what it gives
-                    var known = st.Mods.Where(x => x.Lu?.Loader == "bml" || x.Lu?.Loader == "chef").Select(x => LoaderLabel(x.Lu.Loader, x.Lu.LoaderVersion)).Distinct().ToList();
-                    if (known.Count > 0) basis.Add(Texts.F("lua_basis_loaders", string.Join("、", known)));
                     foreach (var x in st.Mods.Where(x => x.Lu?.Loader == "bsl"))
-                        if (lu.Broken.Any(b => b.Jit.Contains("ffi"))) basis.Add(Texts.F("lua_basis_bsl", LoaderLabel("bsl", x.Lu.LoaderVersion)));
+                        if (used.Contains("ffi")) basis.Add(Texts.F("lua_basis_bsl", LoaderLabel("bsl", x.Lu.LoaderVersion)));
                     foreach (var x in st.Mods.Where(x => x.Lu?.Boot == "other"))
                         basis.Add(Texts.F("lua_basis_unknown", x.Name));
                 }
@@ -1408,7 +1719,7 @@ namespace QuickDeploy
             if (lu.PackOfName != null)
             {
                 var of = ById(lu.PackOf);
-                if (of == null) Line(Texts.F("lua_pack_missing", lu.PackOfName), m.Enabled ? "Yellow" : "Muted");
+                if (of == null) CopyLine(Texts.F("lua_pack_missing", lu.PackOfName), m.Enabled ? "Yellow" : "Muted");
                 else if (!of.Enabled) Line(Texts.F("lua_pack_off", of.Name), m.Enabled ? "Yellow" : "Muted");
                 else Line(Texts.F("lua_pack", of.Name), "Muted");
             }
@@ -1419,62 +1730,81 @@ namespace QuickDeploy
             {
                 var when = When(st.Lua.SessionWhen);
                 if (lu.LastState == "loaded") Line(Texts.F("lua_last_loaded", when, lu.LastMs), "Muted");
-                else Line(Texts.F(lu.LastState == "failed" ? "lua_last_failed" : "lua_last_nocompile", when, (lu.LastWhy ?? "").Split('\n')[0]), "Red");
+                else
+                {
+                    var key = lu.LastState == "failed" ? "lua_last_failed" : "lua_last_nocompile";
+                    CopyLine(Texts.F(key, when, (lu.LastWhy ?? "").Split('\n')[0]), "Red", Texts.F(key, when, (lu.LastWhy ?? "").TrimEnd()));
+                }
             }
             if (box.Children.Count <= 1) return null;
             return Panel(box, new Thickness(0, 16, 0, 0));
         }
 
         /// <summary>The left column's card on the load order's Lua: the loader in effect, what
-        /// will not run, the last session, and a crash since the last look (the user, 2026-10-26).</summary>
+        /// will not run, the last session (the user, 2026-10-26).</summary>
         void LuaSide()
         {
             var lua = st.Lua;
             if (lua == null) return;
-            bool any = st.Mods.Any(x => x.Enabled && x.Lu != null && (x.Lu.Needs != null || x.Lu.Loader != null || x.Lu.Boot != null));
-            bool crash = NewCrash();
-            if (!any && !crash) return;
-            var card = new StackPanel();
-            if (crash)
+            var loaders = st.Mods.Where(x => x.Loader).ToList();
+            // no loader in the library: no panel at all (the user, 2026-10-26). No crash card either: it said
+            // nothing a player could act on ("没有一点用"); the facts stay in hd2qd lua and the state for a
+            // crash analysis of its own later
+            if (loaders.Count == 0)
             {
-                card.Children.Add(new TextBlock { Text = Texts.F("crash_head", When(lua.CrashWhen)), FontWeight = FontWeights.SemiBold, Foreground = B("Red"), TextWrapping = TextWrapping.Wrap });
-                if (lua.CrashDeployedWhen > 0)
-                {
-                    var t = new TextBlock { Text = Texts.F("crash_mods", When(lua.CrashDeployedWhen), lua.CrashMods.Count), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), ToolTip = string.Join("\n", lua.CrashMods) };
-                    card.Children.Add(t);
-                    var luaThen = lua.CrashMods.Where(n => st.Mods.Any(x => x.Name == n && x.Lu != null && x.Lu.Loader == null)).ToList();
-                    if (luaThen.Count > 0) card.Children.Add(Small(Texts.F("crash_lua", string.Join(", ", luaThen)), new Thickness(0, 4, 0, 0)));
-                }
-                else card.Children.Add(Small(Texts.Get("crash_unknown"), new Thickness(0, 4, 0, 0)));
-                var ok = new Button { Content = Texts.Get("crash_ok"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(0, 8, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
-                ok.Click += (s, e) => { SeenCrash(lua.CrashWhen); RenderNav(); };
-                card.Children.Add(ok);
-                if (any) card.Children.Add(new Border { Height = 1, Background = B("Grid"), Margin = new Thickness(0, 12, 0, 10) });
+                if (loaderPop != null) loaderPop.IsOpen = false;
+                return;
             }
-            if (any)
+            var card = new StackPanel();
             {
                 var running = RunningLabel();
-                var owner = ById(lua.BootOwner);
-                string head = running != null ? Texts.F("lua_side_running", running)
-                    : lua.Running == "other" && owner != null ? Texts.F("lua_side_other", owner.Name) : Texts.Get("lua_side_none");
-                // a dock, not a horizontal stack: the words wrap at the card's edge
-                var line = new DockPanel();
-                bool fine = running != null && lua.Issues.Count == 0;
-                var dot = new Ellipse { Width = 8, Height = 8, Fill = B(fine ? "Blue" : "Yellow"), Margin = new Thickness(0, 7, 8, 0), VerticalAlignment = VerticalAlignment.Top };
-                DockPanel.SetDock(dot, Dock.Left);
-                line.Children.Add(dot);
-                line.Children.Add(new TextBlock { Text = head, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-                card.Children.Add(line);
+                // the loaders, one chosen for every profile; the manager puts it in the game last and
+                // leaves the others out (the user, 2026-10-26: not a list position for the player to
+                // think about). A name opens its details.
+                // the title, and an i button that opens the details (the user, 2026-10-26: only the states
+                // on the panel itself, "点一下再显示这些详细信息")
+                var head = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+                {
+                    // the i drawn as a dot and a stem, its ink centred in the ring (a font's "i" sat high: the user, 2026-10-26)
+                    var glyph = new Canvas { Width = 13.6, Height = 13.6 };
+                    var dot = new Rectangle { Width = 1.8, Height = 1.8, Fill = B("Muted") };
+                    Canvas.SetLeft(dot, 5.9); Canvas.SetTop(dot, 2.9);
+                    var stem = new Rectangle { Width = 1.8, Height = 5.4, Fill = B("Muted") };
+                    Canvas.SetLeft(stem, 5.9); Canvas.SetTop(stem, 5.3);
+                    glyph.Children.Add(dot);
+                    glyph.Children.Add(stem);
+                    var info = new Border
+                    {
+                        Width = 16, Height = 16, CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1.2),
+                        BorderBrush = B("Muted"), Background = Brushes.Transparent, Cursor = Cursors.Hand,
+                        VerticalAlignment = VerticalAlignment.Center, ToolTip = Texts.Get("lua_side_info"), Child = glyph,
+                    };
+                    info.MouseLeftButtonUp += (s, e) => LoaderInfo(info);
+                    loaderInfoBtn = info;
+                    // the details open: the new state in them, and placed by the new button once it is laid
+                    // out (it stays where it is until then; the new button is where the old one was)
+                    if (loaderPop != null && loaderPop.IsOpen)
+                    {
+                        var pop = loaderPop;
+                        pop.Child = LoaderInfoBox();
+                        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => { if (pop.IsOpen) PlaceBy(pop, info); }));
+                    }
+                    DockPanel.SetDock(info, Dock.Right);
+                    head.Children.Add(info);
+                }
+                var title = Label("lua_side_head", new Thickness(0));
+                title.VerticalAlignment = VerticalAlignment.Center;
+                head.Children.Add(title);
+                card.Children.Add(head);
+                foreach (var x in loaders) card.Children.Add(LoaderChoice(x, x.Id == st.LoaderChoice));
+                card.Children.Add(LoaderChoice(null, st.LoaderChoice == null));
                 void Say(string text) => card.Children.Add(new TextBlock { Text = text, FontSize = 12, Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) });
                 foreach (var g in lua.Issues.GroupBy(i => i.Kind))
                 {
                     var first = g.First();
                     switch (g.Key)
                     {
-                        case "boot_conflict": Say(Texts.F("lua_side_boot_conflict", first.Mods.Count, ById(first.Mods[0])?.Name ?? "?")); break;
-                        case "two_loaders": Say(Texts.F("lua_side_two_loaders", running ?? "-")); break;
-                        case "no_loader": Say(Texts.F("lua_side_no_loader", first.Mods.Count(id => ById(id)?.Lu?.Needs != null))); break;
-                        case "needs_chef": Say(Texts.F("lua_side_needs_chef", first.Mods.Count)); break;
+                        // what depends on the loader is said under each choice (LoaderChoice), not here
                         case "same_name": Say(Texts.F("lua_side_same", g.Count())); break;
                         case "cannot_run": Say(Texts.F("lua_side_broken", g.Count())); break;
                         case "pack_alone": Say(Texts.F("lua_side_pack", g.Count())); break;
@@ -1485,32 +1815,164 @@ namespace QuickDeploy
                 if (Texts.Hints && lua.Issues.Count > 0) card.Children.Add(Small(Texts.Get("lua_side_note"), new Thickness(0, 6, 0, 0)));
             }
             Nav.Children.Add(new Border { Height = 12 });
-            Nav.Children.Add(new Border { BorderBrush = B(crash ? "Red" : "Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(12), Child = card });
+            Nav.Children.Add(new Border { BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(12), Child = card });
         }
 
-        /// <summary>A crash dump newer than the last one the player dismissed. The first time,
-        /// the dumps already there count as seen: only a crash from then on is news.</summary>
-        bool NewCrash()
+        /// <summary>One line of the loader panel: a round switch to choose it (null: no loader), and
+        /// its name, which opens its details.</summary>
+        UIElement LoaderChoice(ModRow x, bool on)
         {
-            var when = st.Lua?.CrashWhen ?? 0;
-            if (when <= 0) return false;
-            Dictionary<string, object> d;
-            try { d = Store.Load("gui.json"); }
-            catch (Exception e) when (e is IOException || e is FormatException) { return false; }
-            if (!d.ContainsKey("crash_seen")) { SeenCrash(when); return false; }
-            return when > Json.Long(d, "crash_seen");
-        }
-
-        void SeenCrash(long when)
-        {
-            try
+            var line = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+            var ring = new Border
             {
-                var d = Store.Load("gui.json");
-                d["crash_seen"] = when;
-                Store.Save("gui.json", d);
+                Width = 14, Height = 14, CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1.5),
+                BorderBrush = B(on ? "Blue" : "Muted"), Background = Brushes.Transparent, Margin = new Thickness(0, 3, 8, 0),
+                VerticalAlignment = VerticalAlignment.Top, Cursor = on ? Cursors.Arrow : Cursors.Hand, ToolTip = on ? null : Texts.Get("lua_side_pick"),
+                Child = on ? new Ellipse { Width = 6, Height = 6, Fill = B("Blue"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } : null,
+            };
+            if (!on)
+                ring.MouseLeftButtonUp += (s, e) => ChooseLoader(x);
+            DockPanel.SetDock(ring, Dock.Left);
+            line.Children.Add(ring);
+            var words = new StackPanel();
+            if (x == null) words.Children.Add(new TextBlock { Text = Texts.Get("lua_side_nothing"), Foreground = B(on ? "Ink" : "Muted"), TextWrapping = TextWrapping.Wrap });
+            else
+            {
+                var label = LoaderLabel(x.LoaderKind, x.Lu?.LoaderVersion) ?? x.Name;
+                var name = new TextBlock
+                {
+                    Text = label, FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal, TextWrapping = TextWrapping.Wrap, Cursor = Cursors.Hand,
+                    Foreground = B(x.Id == selectedId ? "Blue" : on ? "Ink" : "Muted"),
+                };
+                var id = x.Id;
+                name.MouseLeftButtonUp += (s, e) => { selectedId = id; RenderDetail(); RenderNav(); };
+                words.Children.Add(name);
+                bool helping = !on && x.Id == st.LoaderHelper;
+                words.Children.Add(new TextBlock { Text = Texts.Get(on && loaderSwitching ? "lua_side_switching" : on ? "lua_side_on" : helping ? "lua_side_helping" : "lua_side_off"), FontSize = 12,
+                                                   Foreground = B(on || helping ? "Blue" : "Muted"), TextWrapping = TextWrapping.Wrap });
             }
-            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+            line.Children.Add(words);
+            return line;
         }
+
+        /// <summary>The loader panel's details, from its i button, in a box of their own beside it (the
+        /// user, 2026-10-26: the panel shows only the states; "只放在详细信息里"): under every loader, the one
+        /// in effect too, the same question, which mods would not start and why. Nothing for no loader: no
+        /// Lua mod starts, as everyone knows. Closes like a menu: a click elsewhere, or Esc.</summary>
+        void LoaderInfo(FrameworkElement at)
+        {
+            if (loaderPop != null && loaderPop.IsOpen) { CloseLoaderInfo(); return; }     // the i again: closed
+            if (pressClosedInfo) { pressClosedInfo = false; return; }                         // this click's press closed it
+            // placed on the screen, not on the button: the left column is drawn anew on every state, and a
+            // popup on a button that leaves jumped to the column's corner (the user, 2026-10-26)
+            var pop = new System.Windows.Controls.Primitives.Popup
+            {
+                Placement = System.Windows.Controls.Primitives.PlacementMode.Absolute,
+                // closed by the window (CloseLoaderInfo), not by the popup itself: its own rule closed it
+                // when the copy menu of a line in it opened
+                StaysOpen = true, AllowsTransparency = true, PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.None,
+                Child = LoaderInfoBox(),
+            };
+            pop.KeyDown += (s, e) => { if (e.Key == Key.Escape) pop.IsOpen = false; };
+            PlaceBy(pop, at);
+            loaderPop = pop;
+            pop.IsOpen = true;
+            pop.Child.Focus();
+        }
+
+        /// <summary>The press of the click under way closed the details (the i pressed again).</summary>
+        bool pressClosedInfo;
+
+        /// <summary>The details closed like a menu: a click anywhere in the window, Esc, another window, or
+        /// the window moved (they are placed on the screen).</summary>
+        void CloseLoaderInfo()
+        {
+            if (loaderPop == null || !loaderPop.IsOpen) return;
+            loaderPop.IsOpen = false;
+        }
+
+        /// <summary>The details beside the i button: 8 to its right, their tops level.</summary>
+        void PlaceBy(System.Windows.Controls.Primitives.Popup pop, FrameworkElement at)
+        {
+            var source = PresentationSource.FromVisual(at);
+            if (source?.CompositionTarget == null) return;
+            var p = source.CompositionTarget.TransformFromDevice.Transform(at.PointToScreen(new Point(at.ActualWidth + 8, 0)));
+            pop.HorizontalOffset = p.X;
+            pop.VerticalOffset = p.Y;
+        }
+
+        /// <summary>What the details say (LoaderInfo).</summary>
+        FrameworkElement LoaderInfoBox()
+        {
+            var box = new StackPanel();
+            var lua = st.Mods.Any(y => y.Enabled && !y.Loader && y.Lu?.Needs != null);
+            bool firstOne = true;
+            var sep = Texts.Zh ? "、" : ", ";
+            // every line can be selected and copied (the user, 2026-10-26)
+            void Say(string text, string colour)
+            {
+                var t = Selectable.Text(text, 12, colour);
+                t.Margin = new Thickness(0, 1, 0, 0);
+                box.Children.Add(t);
+            }
+            foreach (var x in st.Mods.Where(y => y.Loader))
+            {
+                bool on = x.Id == st.LoaderChoice;
+                var name = Selectable.Text(LoaderLabel(x.LoaderKind, x.Lu?.LoaderVersion) ?? x.Name, FontSize, on ? "Ink" : "Muted");
+                name.FontWeight = FontWeights.SemiBold;
+                name.Margin = new Thickness(0, firstOne ? 0 : 10, 0, 1);
+                box.Children.Add(name);
+                firstOne = false;
+                // helping Boot Mod Loader: the mods it starts, by name (the panel says only "helping")
+                if (!on && x.Id == st.LoaderHelper)
+                {
+                    var helped = st.Mods.Where(y => y.Enabled && !y.Loader && y.Lu?.Needs == "chef").Select(y => y.Name).ToList();
+                    var chosen = ById(st.LoaderChoice);
+                    Say(Texts.F("lua_info_helping", chosen != null ? LoaderLabel(chosen.LoaderKind, chosen.Lu?.LoaderVersion) ?? chosen.Name : "?",
+                                string.Join(sep, helped)), "Blue");
+                }
+                if (!st.Lua.Outcomes.TryGetValue(x.Id, out var outs)) continue;
+                if (outs.Count == 0 && lua) Say(Texts.Get(on ? "lua_side_all_start" : "lua_side_all_start_if"), "Muted");
+                foreach (var o in outs)
+                {
+                    var over = ById(o.Over);
+                    var why = Texts.F("lua_why_" + o.Why, over == null ? "?" : over.Loader ? LoaderLabel(over.LoaderKind, over.Lu?.LoaderVersion) ?? over.Name : over.Name);
+                    Say(Texts.F(on ? "lua_side_wont" : "lua_side_wont_if", why, string.Join(sep, o.Mods.Select(id => ById(id)?.Name ?? id))), "Yellow");
+                }
+            }
+            var border = new Border
+            {
+                Background = B("Ground700"), BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Padding = new Thickness(12),
+                Width = 340, Child = box, Focusable = true,
+            };
+            // a popup is outside the window's tree: it takes the window's font only when given it
+            TextElement.SetFontFamily(border, FontFamily);
+            TextElement.SetFontSize(border, FontSize);
+            return border;
+        }
+
+        /// <summary>A loader chosen in the panel (null: none): shown at once, the ring moved and the line
+        /// saying it is switching, while the choice is saved and the state read again in the background
+        /// (the user, 2026-10-26: the panel waited for the whole check before a click showed).</summary>
+        async void ChooseLoader(ModRow x)
+        {
+            if (st == null || busy || loaderSwitching) return;
+            st.LoaderChoice = x?.Id;
+            // Chef helps only Boot Mod Loader; whether it still does, the state says
+            if (x?.LoaderKind != "bml") st.LoaderHelper = null;
+            loaderSwitching = true;
+            RenderNav();
+            waiting++;
+            var r = await Queued(() => Cli.Run("loader", x == null ? "none" : x.Id));
+            waiting--;
+            loaderSwitching = false;
+            if (r.Ok) lastDone = x == null ? Texts.Get("loader_none_chosen") : Texts.F("loader_chosen", x.Name);
+            Refused(r);
+            Refresh();
+        }
+
+        /// <summary>A loader choice being saved (ChooseLoader).</summary>
+        bool loaderSwitching;
 
         /// <summary>Any one of the labels the filter holds (or no filter at all), and none it
         /// leaves out.</summary>
@@ -1546,6 +2008,7 @@ namespace QuickDeploy
             }
             foreach (var f in m.Files) { Add(f.Name); Add(f.Src); }
             if (m.Lua) Add("lua");
+            if (m.Lu != null) foreach (var s in m.Lu.Scripts) Add(s);      // a script's name from a log finds its mod
             if (m.Loader) Add("loader");
             foreach (var t in m.Tags) Add(t);
             if (m.NexusMod > 0) { Add("nexus"); Add(m.NexusMod.ToString()); Add(m.NexusPage); }
@@ -1577,6 +2040,26 @@ namespace QuickDeploy
             }
         }
 
+        /// <summary>Text typed on the mod list with no text box to take it goes to the search: no
+        /// click on the box first (the user, 2026-10-26). Added to what the box holds. Not with
+        /// Ctrl, Alt or Win (shortcuts), not a lone space (it presses the focused button), not
+        /// while a row is dragged or another page is on show.</summary>
+        void TypeToSearch(object sender, TextCompositionEventArgs e)
+        {
+            if (string.IsNullOrEmpty(e.Text) || e.Text.Any(char.IsControl) || string.IsNullOrWhiteSpace(e.Text)) return;
+            if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Windows)) != 0) return;
+            if (OnShow() != ListScroll || !SearchBox.IsVisible || dragRow != null) return;
+            // a box one can type in has the keys already (the search itself, a name being changed);
+            // a line of copyable text does not
+            if (Keyboard.FocusedElement is TextBox tb && !tb.IsReadOnly) return;
+            if (Keyboard.FocusedElement is PasswordBox) return;
+            SearchBox.Focus();
+            SearchBox.CaretIndex = SearchBox.Text.Length;
+            SearchBox.SelectedText = e.Text;
+            SearchBox.CaretIndex = SearchBox.Text.Length;
+            e.Handled = true;
+        }
+
         void SearchClear_Click(object sender, RoutedEventArgs e)
         {
             SearchBox.Text = "";
@@ -1601,6 +2084,14 @@ namespace QuickDeploy
 
         void Render()
         {
+            // labels remembered from the last time that no mod carries any more filter nothing
+            if (!fromSaved && !filtersPruned)
+            {
+                filtersPruned = true;
+                var known = new HashSet<string>(st.Tags.Concat(st.Mods.SelectMany(x => x.Tags)), StringComparer.CurrentCultureIgnoreCase);
+                tagFilter.RemoveWhere(t => !known.Contains(t));
+                tagExclude.RemoveWhere(t => !known.Contains(t));
+            }
             int on = st.Mods.Count(m => m.Enabled);
             // only the missing game folder is said under the title: the counts were noise there (the user, 2026-10-25)
             SummaryText.Text = st.GameDir == null ? Texts.Get("no_game") : "";
@@ -1610,20 +2101,7 @@ namespace QuickDeploy
             DeployBtn.IsEnabled = st.Deploying == null && !fromSaved;   // two at once would undo each other; a saved list is not the library yet
             // what was just done comes first (a download leaves changes to deploy: the Deploy
             // button counts them); else whether the game folder matches
-            if (st.GameDir == null) Foot(Texts.Get("no_game"), "Yellow");
-            // another program is writing to the game folder: what was just read is a state on
-            // its way somewhere, and its numbers are nobody's fault (the user, 2026-10-25)
-            else if (st.Deploying != null) Foot(Texts.F("deploy_busy", st.Deploying.Since), "Yellow");
-            // files a deploy would leave alone that are not what it thinks they are: an
-            // interrupted deploy, another manager, an antivirus. Said before anything else,
-            // because nothing else here is true while it holds. What a deploy is on its way to
-            // put right is not said here: the Deploy button already counts that (the user,
-            // 2026-10-25: a library waiting to be deployed is not a fault)
-            else if (st.Check.Wrong > 0) Foot(Texts.F("mismatch", st.Check.Wrong), "Yellow");
-            else if (lastDone != null) Foot(Texts.F("done", lastDone), "Blue");
-            else if (st.Pending == 0) Foot(Texts.Get("synced"), "Blue");
-            else Foot(Texts.F("pending", st.Written, st.Moved, st.Deleted, Texts.Size(st.CopiedBytes)), "Yellow");
-            lastDone = null;
+            FootState();
             if (startWith != null)
             {
                 // --select TEXT: the first mod whose name holds it, chosen and open
@@ -2017,8 +2495,12 @@ namespace QuickDeploy
             foreach (var m in shown)
             {
                 var id = m.Id;
-                var box = new CheckBox { Style = (Style)FindResource("Tick"), IsChecked = ticked.Contains(id), Margin = new Thickness(0, 5, 0, 5) };
-                var line = new DockPanel();
+                // the tick is the box alone, so the mod's name and folder beside it can be selected
+                // and copied (the user, 2026-10-26)
+                var box = new CheckBox { Style = (Style)FindResource("Tick"), IsChecked = ticked.Contains(id), VerticalAlignment = VerticalAlignment.Center };
+                var line = new DockPanel { Margin = new Thickness(0, 5, 0, 5) };
+                DockPanel.SetDock(box, Dock.Left);
+                line.Children.Add(box);
                 var size = new TextBlock { Text = Directory.Exists(m.Path) && sizes.TryGetValue(m.Id ?? "", out var own) ? Gb(own) : "—", FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), Width = 90, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
                 DockPanel.SetDock(size, Dock.Right);
                 line.Children.Add(size);
@@ -2028,12 +2510,13 @@ namespace QuickDeploy
                 DockPanel.SetDock(pic, Dock.Left);
                 line.Children.Add(pic);
                 var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-                words.Children.Add(new TextBlock { Text = m.Name, FontWeight = FontWeights.SemiBold, Foreground = B(m.Enabled ? "Ink" : "Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
-                words.Children.Add(new TextBlock { Text = IOPath.GetFileName(m.Path.TrimEnd('\\')), FontFamily = Mono, FontSize = 11, Foreground = B("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
+                var title = Selectable.Text(m.Name, 14, m.Enabled ? "Ink" : "Muted");
+                title.FontWeight = FontWeights.SemiBold;
+                words.Children.Add(title);
+                words.Children.Add(Selectable.Text(IOPath.GetFileName(m.Path.TrimEnd('\\')), 11, "Muted", Mono));
                 line.Children.Add(words);
-                box.Content = line;
                 box.Click += (s, e) => { if (box.IsChecked == true) ticked.Add(id); else ticked.Remove(id); RenderStorage(); };
-                list.Children.Add(Band(box, band++));
+                list.Children.Add(Band(line, band++));
             }
             Storages.Children.Add(Card(list));
             OldVersions();
@@ -2104,7 +2587,18 @@ namespace QuickDeploy
             foreach (var l in left)
             {
                 var path = l.Path;
-                var line = new DockPanel();
+                var line = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
+                var tick = new CheckBox
+                {
+                    Style = (Style)FindResource("Tick"), IsChecked = oldPick.Contains(path), VerticalAlignment = VerticalAlignment.Center,
+                };
+                tick.Click += (s, e) =>
+                {
+                    if (tick.IsChecked == true) oldPick.Add(path); else oldPick.Remove(path);
+                    RenderStorage();
+                };
+                DockPanel.SetDock(tick, Dock.Left);
+                line.Children.Add(tick);
                 var size = new TextBlock
                 {
                     Text = Gb(l.Bytes), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), Width = 90,
@@ -2112,22 +2606,10 @@ namespace QuickDeploy
                 };
                 DockPanel.SetDock(size, Dock.Right);
                 line.Children.Add(size);
-                line.Children.Add(new TextBlock
-                {
-                    Text = l.Name, FontFamily = Mono, FontSize = 12, Foreground = B("Muted"),
-                    TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center,
-                });
-                var tick = new CheckBox
-                {
-                    Style = (Style)FindResource("Tick"), IsChecked = oldPick.Contains(path), Content = line,
-                    Margin = new Thickness(0, 4, 0, 4),
-                };
-                tick.Click += (s, e) =>
-                {
-                    if (tick.IsChecked == true) oldPick.Add(path); else oldPick.Remove(path);
-                    RenderStorage();
-                };
-                box.Children.Add(Band(tick, oldBand++));
+                var folder = Selectable.Text(l.Name, 12, "Muted", Mono);
+                folder.VerticalAlignment = VerticalAlignment.Center;
+                line.Children.Add(folder);
+                box.Children.Add(Band(line, oldBand++));
             }
             Storages.Children.Add(Card(box));
         }
@@ -2281,7 +2763,12 @@ namespace QuickDeploy
             line.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = B(ok ? "Blue" : "Yellow"), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
             line.Children.Add(new TextBlock { Text = Texts.Get(g == null ? "st_game_none" : ok ? "st_game_ok" : "st_game_gone"), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
             box.Children.Add(line);
-            if (g != null) box.Children.Add(new TextBlock { Text = g, FontFamily = Mono, FontSize = 15, Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap });
+            if (g != null)
+            {
+                var path = Selectable.Text(g, 15, "Ink", Mono);
+                path.Margin = new Thickness(0, 8, 0, 0);
+                box.Children.Add(path);
+            }
             return new Border { BorderBrush = B(ok ? "Grid" : "Yellow"), BorderThickness = new Thickness(1), Background = B("Ground700"), Padding = new Thickness(16), Child = box };
         }
 
@@ -2345,7 +2832,11 @@ namespace QuickDeploy
             DockPanel.SetDock(acts, Dock.Right);
             top.Children.Add(acts);
             var title = new WrapPanel();
-            title.Children.Add(new TextBlock { Text = f.Path, FontFamily = Mono, FontSize = 15, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 0, 10, 4) });
+            var folderPath = Selectable.Text(f.Path, 15, "Ink", Mono);
+            folderPath.FontWeight = FontWeights.Bold;
+            folderPath.TextWrapping = TextWrapping.NoWrap;
+            folderPath.Margin = new Thickness(0, 0, 10, 4);
+            title.Children.Add(folderPath);
             void Badge(string text, string fill, string ink)
             {
                 title.Children.Add(new Border
@@ -2450,13 +2941,30 @@ namespace QuickDeploy
         /// then advice for the mods that landed on another drive than the game.</summary>
         async void ImportFromManagers(bool firstStart, FolderFinds finds = null, string folder = null)
         {
+            // another manager's store whose list was not found: its list asked for, never loose mods
+            if (finds?.NeedsConfig != null)
+            {
+                var chosen = AskForList(finds.NeedsConfig, folder);
+                if (chosen == null) return;
+                finds = new FolderFinds { Managers = { chosen } };
+            }
             // from a library folder just added: the lists kept in it and its other mod folders
-            var found = finds?.Managers ?? Importers.Found();
+            var all = finds != null ? finds.Managers.Concat(finds.Problems).ToList() : Importers.Found();
+            var found = all.Where(x => x.Problem == null).ToList();
             var loose = finds?.Loose ?? new List<string>();
-            if (found.Count == 0 && loose.Count == 0) { if (!firstStart) Dialog.Tell(this, Texts.Get("im_none")); return; }
+            // a list found and not read is said, never left out as if there were none (the user, 2026-10-26)
+            var problems = string.Join("\n\n", all.Where(x => x.Problem != null).Select(x =>
+                Texts.F(x.ProblemKind == "bad_format" || x.ProblemKind == "bad_version" ? "im_problem_format" : "im_problem", x.Name, x.Where, x.Problem)));
+            if (found.Count == 0 && loose.Count == 0)
+            {
+                if (problems.Length > 0) Dialog.Tell(this, problems);
+                else if (!firstStart) Dialog.Tell(this, Texts.Get("im_none"));
+                return;
+            }
             var items = found.Select(x => Texts.F("im_item", x.Name, x.Mods, x.Where)).ToList();
             if (loose.Count > 0) items.Add(Texts.F("lf_loose", loose.Count));
-            var pick = Dialog.Ticks(this, Texts.Get(folder != null ? "lf_ask" : firstStart ? "im_ask_first" : "im_ask"), items.ToArray(), Texts.Get("arsenal_import"));
+            var ask = Texts.Get(folder != null ? "lf_ask" : firstStart ? "im_ask_first" : "im_ask");
+            var pick = Dialog.Ticks(this, problems.Length > 0 ? problems + "\n\n" + ask : ask, items.ToArray(), Texts.Get("arsenal_import"));
             if (pick == null || !pick.Any(x => x)) return;
             // managers that keep several profiles: all of them as profiles, or each one's in use (the user, 2026-10-25)
             var several = found.Where((x, k) => pick[k] && x.ProfileNames.Count > 1).ToList();
@@ -2478,6 +2986,7 @@ namespace QuickDeploy
                 if (!pick[i]) continue;
                 var args = new List<string> { "import-" + found[i].Key };
                 if (found[i].Dir != null) { args.Add("--dir"); args.Add(found[i].Dir); }
+                if (found[i].File != null) { args.Add("--file"); args.Add(found[i].File); }
                 if (allProfiles && found[i].ProfileNames.Count > 1) args.Add("--profiles");
                 var r = await Exec(args.ToArray());
                 lines.Add(r.Ok ? Last(r.Out.Split('\n').FirstOrDefault() ?? "") : Texts.F("failed", r.Message));
@@ -2503,6 +3012,29 @@ namespace QuickDeploy
             if (cross > 0) said += "\n\n" + Texts.F("im_cross", cross);
             Dialog.Tell(this, said + "\n\n" + Texts.Get("arsenal_only_one"));
             AdviseDrive(added);
+        }
+
+        /// <summary>A manager's store whose list was not found: the player is told which manager's it
+        /// is and asked for its list file, which must list mods in this folder. Null: not given.</summary>
+        ImportSource AskForList(string key, string folder)
+        {
+            var (name, file, usual) = Importers.ConfigOf(key);
+            if (!Dialog.Ask(this, Texts.F("lf_list_ask", name, file), Texts.Get("lf_list_pick"))) return null;
+            var pick = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = Texts.F("lf_list_title", name), Filter = file + "|" + file + "|JSON (*.json)|*.json", CheckFileExists = true,
+            };
+            if (usual != null && Directory.Exists(usual)) pick.InitialDirectory = usual;
+            if (pick.ShowDialog(this) != true) return null;
+            ImportSource src;
+            try { src = Importers.FromChosenFile(key, pick.FileName, folder); }
+            catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException || e is InvalidCastException)
+            {
+                Dialog.Tell(this, Texts.F("lf_list_bad", pick.FileName, e.Message));
+                return null;
+            }
+            if (src.Mods == 0) { Dialog.Tell(this, Texts.F("lf_list_none", pick.FileName, folder)); return null; }
+            return src;
         }
 
         /// <summary>Mods just added that sit on another drive than the game: say what moving them
@@ -2681,7 +3213,7 @@ namespace QuickDeploy
             col.Children.Add(line);
             // the load order's number
             // a mod outside the profile in use has no place in its load order
-            var num = new TextBlock { Text = st.ProfilesOn && !m.InProfile ? "" : m.Index.ToString(), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), Width = 28, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
+            var num = new TextBlock { Text = st.ProfilesOn && !m.InProfile ? "" : Num(m).ToString(), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), Width = 28, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
             DockPanel.SetDock(num, Dock.Left);
             line.Children.Add(num);
             // open / close
@@ -2877,7 +3409,7 @@ namespace QuickDeploy
             // its place in the load order, under the rows' numbers: they do not seem to skip one
             var num = new TextBlock
             {
-                Text = st.ProfilesOn && !p.InProfile ? "" : p.Index.ToString(), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"),
+                Text = st.ProfilesOn && !p.InProfile ? "" : Num(p).ToString(), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"),
                 Width = 28, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 92, 0),
             };
             DockPanel.SetDock(num, Dock.Left);
@@ -3254,18 +3786,31 @@ namespace QuickDeploy
             DockPanel.SetDock(pic, Dock.Left);
             head.Children.Add(pic);
             var names = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 0, 0) };
-            names.Children.Add(new TextBlock { Text = m.Name, FontSize = 22, FontWeight = FontWeights.Bold, TextWrapping = TextWrapping.Wrap });
+            var title = Selectable.Text(m.Name, 22);
+            title.FontWeight = FontWeights.Bold;
+            names.Children.Add(title);
             // a name the player gave it: the one it came with is kept beneath (the user, 2026-10-24)
             if (m.SiteAuthor != null)
-                names.Children.Add(new TextBlock { Text = Texts.F("by_author", m.SiteAuthor), FontSize = 12, Foreground = B("Muted"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) });
+            {
+                var by = Selectable.Text(Texts.F("by_author", m.SiteAuthor), 12, "Muted");
+                by.Margin = new Thickness(0, 2, 0, 0);
+                names.Children.Add(by);
+            }
             if (m.RealName != null)
-                names.Children.Add(new TextBlock
-                {
-                    Text = Texts.F("real_name", m.RealName), FontSize = 12, Foreground = B("Muted"),
-                    TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0), ToolTip = Texts.Get("real_name_tip"),
-                });
-            names.Children.Add(new TextBlock { Text = m.ShownVersion != null ? V(m.ShownVersion) : Texts.Get("ver_none"), FontFamily = Mono, FontSize = 14,
-                                               Foreground = B(m.ShownVersion != null ? "Ink" : "Muted"), ToolTip = VersionTip(m), Margin = new Thickness(0, 2, 0, 2) });
+            {
+                var real = Selectable.Text(Texts.F("real_name", m.RealName), 12, "Muted");
+                real.Margin = new Thickness(0, 2, 0, 0);
+                real.ToolTip = Texts.Get("real_name_tip");
+                names.Children.Add(real);
+            }
+            if (m.ShownVersion != null)
+            {
+                var ver = Selectable.Text(V(m.ShownVersion), 14, "Ink", Mono);
+                ver.ToolTip = VersionTip(m);
+                ver.Margin = new Thickness(0, 2, 0, 2);
+                names.Children.Add(ver);
+            }
+            else names.Children.Add(new TextBlock { Text = Texts.Get("ver_none"), FontFamily = Mono, FontSize = 14, Foreground = B("Muted"), ToolTip = VersionTip(m), Margin = new Thickness(0, 2, 0, 2) });
             names.Children.Add(new TextBlock { Text = Texts.F("n_files", Texts.N(m.Files.Count)) + " · " + Texts.Size(m.DeployBytes), FontFamily = Mono, FontSize = 14, FontWeight = FontWeights.Bold });
             head.Children.Add(names);
             Detail.Children.Add(head);
@@ -3280,55 +3825,88 @@ namespace QuickDeploy
             });
             string desc = fromSite ? m.SiteSummary.Trim() : string.IsNullOrWhiteSpace(m.Description) ? Texts.Get("no_desc") : m.Description.Trim();
             bool longDesc = desc.Length > 90 || desc.Contains("\n");
-            var dt = new TextBlock { Text = desc, Foreground = B(string.IsNullOrWhiteSpace(desc) || (!fromSite && string.IsNullOrWhiteSpace(m.Description)) ? "Muted" : "Ink"), TextWrapping = TextWrapping.Wrap, LineHeight = 21, Margin = new Thickness(0, 12, 0, 0) };
-            if (longDesc && !descOpen) { dt.MaxHeight = 42; dt.TextTrimming = TextTrimming.WordEllipsis; }
-            man.Children.Add(dt);
+            string descColour = string.IsNullOrWhiteSpace(desc) || (!fromSite && string.IsNullOrWhiteSpace(m.Description)) ? "Muted" : "Ink";
+            bool hasDesc = descColour == "Ink";
+            if (longDesc && !descOpen)
+            {
+                var dt = new TextBlock { Text = desc, Foreground = B(descColour), TextWrapping = TextWrapping.Wrap, LineHeight = 21, Margin = new Thickness(0, 12, 0, 0), MaxHeight = 42, TextTrimming = TextTrimming.WordEllipsis };
+                Selectable.Menu(dt, () => desc);
+                man.Children.Add(dt);
+            }
+            else if (hasDesc)
+            {
+                var dt = Selectable.Text(desc, 14, descColour, null, 21);
+                dt.Margin = new Thickness(0, 12, 0, 0);
+                man.Children.Add(dt);
+            }
+            else man.Children.Add(new TextBlock { Text = desc, Foreground = B(descColour), TextWrapping = TextWrapping.Wrap, LineHeight = 21, Margin = new Thickness(0, 12, 0, 0) });
             if (longDesc)
             {
                 var more = new Button { Content = Texts.Get(descOpen ? "less" : "more"), Template = Plain(), Foreground = B("Blue"), FontWeight = FontWeights.SemiBold, Cursor = Cursors.Hand, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
                 more.Click += (s, e) => { descOpen = !descOpen; RenderDetail(); };
                 man.Children.Add(more);
             }
-            if (m.Error != null) man.Children.Add(new TextBlock { Text = Texts.Get("broken") + ": " + m.Error, Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) });
+            if (m.Error != null)
+            {
+                var err = Selectable.Text(Texts.Get("broken") + ": " + m.Error, 14, "Yellow");
+                err.Margin = new Thickness(0, 10, 0, 0);
+                man.Children.Add(err);
+            }
             Detail.Children.Add(Panel(man, new Thickness(0, 20, 0, 0)));
 
             // the facts
             var facts = new Grid { Margin = new Thickness(0, 20, 0, 0) };
             facts.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             facts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            void Fact(string key, string value, bool mono = false)
+            void Fact(string key, string value, bool mono = false, bool copy = false)
             {
                 int r = facts.RowDefinitions.Count;
                 facts.RowDefinitions.Add(new RowDefinition());
                 var k = new TextBlock { Text = Texts.Get(key), FontSize = 12, Foreground = B("Muted"), Margin = new Thickness(0, 3, 16, 3) };
                 Grid.SetRow(k, r);
                 facts.Children.Add(k);
-                var v = new TextBlock { Text = value, FontSize = 12, TextAlignment = TextAlignment.Right, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 3), ToolTip = value };
-                if (mono) v.FontFamily = Mono;
+                FrameworkElement v;
+                if (copy)
+                {
+                    var t = Selectable.Text(value, 12, "Ink", mono ? Mono : null);
+                    t.TextAlignment = TextAlignment.Right;
+                    v = t;
+                }
+                else
+                {
+                    var t = new TextBlock { Text = value, FontSize = 12, TextAlignment = TextAlignment.Right, TextWrapping = TextWrapping.Wrap };
+                    if (mono) t.FontFamily = Mono;
+                    v = t;
+                }
+                v.Margin = new Thickness(0, 3, 0, 3);
+                v.ToolTip = value;
                 Grid.SetRow(v, r);
                 Grid.SetColumn(v, 1);
                 facts.Children.Add(v);
             }
-            if (st.ProfilesOn && !m.InProfile) Fact("d_order", Texts.Get("pf_outside"));
-            else Fact("d_order", Texts.F("d_order_v", m.Index, st.ProfilesOn ? st.Mods.Count(x => x.InProfile) : st.Mods.Count), true);
-            Fact("d_opts", m.Options.Count > 0 ? m.Chosen + " / " + m.Choices : "—");
-            Fact("d_files", Texts.N(m.Files.Count), true);
-            Fact("d_folder", m.Path, true);
+            // a loader has no place in the list (it goes last) and no options (the user, 2026-10-26)
+            if (m.Loader) { }
+            else if (st.ProfilesOn && !m.InProfile) Fact("d_order", Texts.Get("pf_outside"));
+            else Fact("d_order", Texts.F("d_order_v", Num(m), st.ProfilesOn ? st.Mods.Count(x => x.InProfile && !x.Loader) : st.Mods.Count(x => !x.Loader)), true);
+            if (!m.Loader) Fact("d_opts", m.Options.Count > 0 ? m.Chosen + " / " + m.Choices : "—");
+            Fact("d_folder", m.Path, true, true);
             {
-                // remove from the library, and open the folder
+                // remove from the library, and open the folder. A row that does not fit wraps onto
+                // the next line rather than cutting off the first button (the user, 2026-10-26); each
+                // button keeps 8 px on its left, which the panel's -8 takes back at the line's start
                 int r = facts.RowDefinitions.Count;
                 facts.RowDefinitions.Add(new RowDefinition());
-                var acts = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 4, 0, 6) };
-                var removeBtn = new Button { Content = Texts.Get("remove_btn"), Style = (Style)FindResource("Ghost"), MinHeight = 32 };
+                var acts = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(-8, 0, 0, 6) };
+                var removeBtn = new Button { Content = Texts.Get("remove_btn"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 4, 0, 0) };
                 removeBtn.Click += (s, e) => { if (Dialog.Ask(this, Texts.F("remove_ask", m.Name), Texts.Get("remove_btn"))) Run("remove", m.Id); };
                 // red: deleting from the disk cannot be undone
-                var deleteBtn = new Button { Content = Texts.Get("delete_btn"), Style = (Style)FindResource("Danger"), MinHeight = 32, Margin = new Thickness(0, 0, 8, 0) };
+                var deleteBtn = new Button { Content = Texts.Get("delete_btn"), Style = (Style)FindResource("Danger"), MinHeight = 32, Margin = new Thickness(8, 4, 0, 0) };
                 deleteBtn.Click += (s, e) => DeleteFromDisk(m);
                 acts.Children.Add(deleteBtn);
                 acts.Children.Add(removeBtn);
                 if (m.Exists)
                 {
-                    var openBtn = new Button { Content = Texts.Get("open"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 0, 0, 0) };
+                    var openBtn = new Button { Content = Texts.Get("open"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(8, 4, 0, 0) };
                     openBtn.Click += (s, e) => OpenFolder(m.Path);
                     acts.Children.Add(openBtn);
                 }
@@ -3336,7 +3914,7 @@ namespace QuickDeploy
                 Grid.SetColumnSpan(acts, 2);      // the whole row: three buttons do not fit the value column
                 facts.Children.Add(acts);
             }
-            if (!string.IsNullOrEmpty(m.Source) && m.Source != m.Path) Fact("d_source", m.Source, true);
+            if (!string.IsNullOrEmpty(m.Source) && m.Source != m.Path) Fact("d_source", m.Source, true, true);
             Detail.Children.Add(facts);
             // its scripts: what starts them, and whether they will run (the user, 2026-10-26);
             // before its updates, which matter less than whether it runs at all
@@ -3353,7 +3931,7 @@ namespace QuickDeploy
                 line.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = B(m.Enabled ? "Blue" : "Muted"), Margin = new Thickness(0, 0, 8, 0) });
                 line.Children.Add(new TextBlock { Text = Texts.Get(m.Enabled ? "in_sync" : "is_off"), FontWeight = FontWeights.SemiBold });
                 ok.Children.Add(line);
-                ok.Children.Add(Small(m.Enabled ? Texts.F("in_sync_n", Texts.N(m.Files.Count)) : Texts.Get("is_off_n"), new Thickness(0, 8, 0, 0)));
+                ok.Children.Add(Small(Texts.Get(m.Enabled ? "in_sync_n" : "is_off_n"), new Thickness(0, 8, 0, 0)));
                 Detail.Children.Add(Panel(ok, new Thickness(0, 20, 0, 0)));
             }
 
@@ -3363,22 +3941,24 @@ namespace QuickDeploy
             {
                 var box = new StackPanel();
                 var others = string.Join(" / ", c.Mods.Where(x => x != m.Name));
-                box.Children.Add(new TextBlock
-                {
-                    Text = Texts.F(c.Same ? "same" : "clash", c.Count, others), FontWeight = FontWeights.SemiBold,
-                    Foreground = B(c.Same ? "Ink" : "Yellow"), TextWrapping = TextWrapping.Wrap,
-                });
+                var clash = Selectable.Text(Texts.F(c.Same ? "same" : "clash", c.Count, others), 14, c.Same ? "Ink" : "Yellow");
+                clash.FontWeight = FontWeights.SemiBold;
+                box.Children.Add(clash);
                 box.Children.Add(Small(c.Same ? Texts.Get("same_tip") : Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
                 // which resources (the user, 2026-10-25): type, then the name or the id
                 const int lines = 8;
                 var list = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
                 foreach (var r in c.Resources.Take(lines))
                 {
-                    var tb = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 13, Margin = new Thickness(0, 1, 0, 1) };
-                    tb.Inlines.Add(new System.Windows.Documents.Run(TypeLabel(r.Type) + "  ·  ") { Foreground = B("Muted") });
-                    if (r.Name != null) tb.Inlines.Add(new System.Windows.Documents.Run(r.Name) { Foreground = B("Ink") });
-                    else tb.Inlines.Add(new System.Windows.Documents.Run(r.Id) { Foreground = B("Muted"), FontFamily = Mono, FontSize = 12 });
-                    list.Children.Add(tb);
+                    // the type, then the name or the id, which can be copied without the type
+                    var dp = new DockPanel { Margin = new Thickness(0, 1, 0, 1) };
+                    var type = new TextBlock { Text = TypeLabel(r.Type) + "  ·  ", FontSize = 13, Foreground = B("Muted") };
+                    DockPanel.SetDock(type, Dock.Left);
+                    dp.Children.Add(type);
+                    var what = r.Name != null ? Selectable.Text(r.Name, 13) : Selectable.Text(r.Id, 12, "Muted", Mono);
+                    what.VerticalAlignment = VerticalAlignment.Center;
+                    dp.Children.Add(what);
+                    list.Children.Add(dp);
                 }
                 if (c.Count > Math.Min(lines, c.Resources.Count))
                     list.Children.Add(Small(Texts.F("clash_more", c.Count - Math.Min(lines, c.Resources.Count)), new Thickness(0, 2, 0, 0)));
@@ -3401,12 +3981,17 @@ namespace QuickDeploy
                 dp.Children.Add(new TextBlock { Text = Texts.Get(key), FontSize = 12, Foreground = B("Muted") });
                 dep.Children.Add(dp);
             }
-            string mode = !m.Enabled ? "mode_off" : m.Changes > 0 ? "mode_pending" : m.Status == "link" ? "mode_link" : m.Status == "partial" ? "mode_partial" : m.Files.Count == 0 ? "mode_off" : "mode_copy";
-            Pair("di_mode", Texts.Get(mode));
-            Pair("di_files", m.Enabled ? Texts.N(m.Files.Count(f => f.Action == "keep")) : "0", "Ink", true);
+            // only what the cards above do not say (the user, 2026-10-26: no repeats): how it sits in
+            // the game while deployed; off, or waiting for a deploy, the card above says so. The
+            // number of its files is at the top of the details
+            bool deployed = m.Enabled && m.Changes == 0 && m.Files.Count > 0;
+            if (deployed) Pair("di_mode", Texts.Get(m.Status == "link" ? "mode_link" : m.Status == "partial" ? "mode_partial" : "mode_copy"));
             Pair("di_lib", Texts.Size(m.LibraryBytes), "Ink", true);
-            long extra = m.Enabled ? m.Files.Where(f => f.Action == "keep" && !f.Linked).Sum(f => f.Bytes) : 0;
-            Pair("di_extra", m.Enabled ? Texts.Size(extra) : "—", extra == 0 ? "Blue" : "Ink", true);
+            if (deployed)
+            {
+                long extra = m.Files.Where(f => f.Action == "keep" && !f.Linked).Sum(f => f.Bytes);
+                Pair("di_extra", Texts.Size(extra), extra == 0 ? "Blue" : "Ink", true);
+            }
             Detail.Children.Add(dep);
         }
 
@@ -3490,11 +4075,14 @@ namespace QuickDeploy
                 var size = new TextBlock { Text = Texts.Size(f.Bytes), FontFamily = Mono, FontSize = 12, Foreground = B("Muted"), VerticalAlignment = VerticalAlignment.Center };
                 DockPanel.SetDock(size, Dock.Right);
                 row.Children.Add(size);
-                row.Children.Add(new TextBlock
+                var fileName = new TextBlock
                 {
                     Text = f.Name + (f.From != null ? "  " + Texts.F("moved_from", f.From) : ""), FontFamily = Mono, FontSize = 12,
                     TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, ToolTip = f.Src,
-                });
+                };
+                var copied = f.Name;
+                Selectable.Menu(fileName, () => copied);
+                row.Children.Add(fileName);
                 list.Children.Add(new Border { BorderBrush = B("Ground700"), BorderThickness = new Thickness(0, 0, 0, 1), Child = row });
             }
             box.Children.Add(new Border { BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground900"), Child = list });
@@ -3524,10 +4112,12 @@ namespace QuickDeploy
             Text = text, FontSize = 12, LineHeight = 16, Foreground = B("Muted"), TextWrapping = TextWrapping.Wrap, Margin = margin,
         };
 
-        TextBlock Code(string text) => new TextBlock
+        FrameworkElement Code(string text)
         {
-            Text = text, FontFamily = Mono, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0),
-        };
+            var t = Selectable.Text(text, 11, "Ink", Mono);
+            t.Margin = new Thickness(0, 2, 0, 0);
+            return t;
+        }
 
         Border Panel(UIElement child, Thickness margin) => new Border
         {
@@ -3940,10 +4530,9 @@ namespace QuickDeploy
                 dp.Children.Add(new TextBlock { Text = Texts.Get(key), FontSize = 12, Foreground = B("Muted") });
                 box.Children.Add(dp);
             }
-            Line("d_channel", m.Channel ?? Texts.Get("up_none"));
-            // the version alone: where it was found is already on the line above, and the tip
-            // says it for the versions that were guessed (the user, 2026-10-24)
-            Line("d_version", m.ShownVersion == null ? Texts.Get("up_none") : V(m.ShownVersion), VersionTip(m));
+            // no source: the sentence below says so. The installed version is at the top of the
+            // details, so it is not said again here (the user, 2026-10-26: no repeats)
+            if (m.Channel != null) Line("d_channel", m.Channel);
             // what the source's page said its newest was, when it was last asked: never the
             // installed version, and only shown when it is not the same (the user, 2026-10-25)
             if (!string.IsNullOrWhiteSpace(m.SiteVersion) &&
@@ -3973,7 +4562,12 @@ namespace QuickDeploy
             }
             // a GitHub release without an archive to download: its page only
             if (apply && m.Channel == "GitHub" && string.IsNullOrEmpty(u.Download)) apply = false;
-            if (text.Length > 0) box.Children.Add(new TextBlock { Text = text, FontSize = 12, Foreground = B(colour), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+            if (text.Length > 0)
+            {
+                var said = Selectable.Text(text, 12, colour);
+                said.Margin = new Thickness(0, 8, 0, 0);
+                box.Children.Add(said);
+            }
 
             // the buttons in two columns of the same width, the odd one last across both:
             // a row of them wrapped into a ragged second line (the user, 2026-10-24)
@@ -4087,7 +4681,7 @@ namespace QuickDeploy
         void Filter_Click(object sender, RoutedEventArgs e)
         {
             if (JustClosed(FilterBtn)) return;
-            var mods = st?.Mods ?? new List<ModRow>();
+            var mods = (st?.Mods ?? new List<ModRow>()).Where(x => !x.Loader).ToList();   // the loaders are in the panel
             var menu = new ContextMenu { PlacementTarget = FilterBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
             Group(menu, false, fromFilter, new List<(string, string, int)>
             {
@@ -4098,7 +4692,6 @@ namespace QuickDeploy
             Group(menu, true, kindFilter, new List<(string, string, int)>
             {
                 ("lua", Texts.Get("filter_lua"), mods.Count(m => KindOf(m) == "lua")),
-                ("loader", Texts.Get("filter_loader"), mods.Count(m => KindOf(m) == "loader")),
                 ("asset", Texts.Get("filter_asset"), mods.Count(m => KindOf(m) == "asset")),
             });
             Dismissable(menu);
@@ -4231,6 +4824,96 @@ namespace QuickDeploy
             {
                 RoutedEvent = UIElement.MouseWheelEvent, Source = wheelTarget,
             });
+            if (wheelTarget == ListScroll) Fling(e);
+        }
+
+        // ------------------------------------------------------------ a fast wheel on the list
+
+        /// <summary>The wheel turned fast on the list, this many notches (120 each) in one direction
+        /// within FlingWindowMs: a button by the pointer goes to the top or the end (the user,
+        /// 2026-10-26: the buttons over the list are far from the pointer).</summary>
+        const int FlingWindowMs = 700, FlingDelta = 5 * 120, FlingRestMs = 1500;
+        readonly List<(int At, int Delta)> flingTurns = new List<(int, int)>();
+        Canvas flingLayer;
+        Border flingBtn;
+        int flingDir;
+        DispatcherTimer flingHide;
+
+        void Fling(MouseWheelEventArgs e)
+        {
+            if (!Texts.FlingButton) return;
+            int dir = Math.Sign(e.Delta);
+            if (flingBtn != null && flingDir != dir) HideFling();          // turned the other way
+            flingTurns.RemoveAll(t => unchecked(e.Timestamp - t.At) > FlingWindowMs || Math.Sign(t.Delta) != dir);
+            flingTurns.Add((e.Timestamp, e.Delta));
+            if (flingBtn != null) { flingHide.Stop(); flingHide.Start(); return; }       // already shown: kept while it turns
+            if (Math.Abs(flingTurns.Sum(t => t.Delta)) < FlingDelta) return;
+            // only when the end it goes to is more than a page away
+            var left = dir < 0 ? ListScroll.ScrollableHeight - ListScroll.VerticalOffset : ListScroll.VerticalOffset;
+            if (left < ListScroll.ViewportHeight) return;
+            ShowFling(dir, e.GetPosition(ListArea));
+        }
+
+        void ShowFling(int dir, Point at)
+        {
+            if (flingLayer == null)
+            {
+                flingLayer = new Canvas { ClipToBounds = true };
+                ListArea.Children.Add(flingLayer);
+                ListScroll.ScrollChanged += (s, e) =>
+                {
+                    // there: nothing left to jump to
+                    if (flingBtn != null && (flingDir > 0 ? ListScroll.VerticalOffset < 0.5 : ListScroll.VerticalOffset > ListScroll.ScrollableHeight - 0.5))
+                        HideFling();
+                };
+                flingHide = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(FlingRestMs) };
+                flingHide.Tick += (s, e) =>
+                {
+                    if (flingBtn != null && flingBtn.IsMouseOver) return;   // the pointer on it: it stays
+                    HideFling();
+                };
+            }
+            flingDir = dir;
+            var words = new StackPanel { Orientation = Orientation.Horizontal };
+            words.Children.Add(new Path
+            {
+                Data = Geometry.Parse(dir > 0 ? GlyphTop : GlyphBottom), Width = 14, Height = 14, Stretch = Stretch.Uniform,
+                Stroke = B("Blue"), StrokeThickness = 2, StrokeEndLineCap = PenLineCap.Round, StrokeStartLineCap = PenLineCap.Round,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0),
+            });
+            words.Children.Add(new TextBlock { Text = Texts.Get(dir > 0 ? "jump_top" : "jump_bottom"), FontSize = 13, FontWeight = FontWeights.SemiBold,
+                                               Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Center });
+            flingBtn = new Border
+            {
+                Background = B("Ground700"), BorderBrush = B("Blue"), BorderThickness = new Thickness(1), Padding = new Thickness(12, 7, 14, 7),
+                Cursor = Cursors.Hand, Child = words,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Opacity = 0.5, Color = Colors.Black },
+            };
+            flingBtn.MouseLeftButtonUp += (s, e) =>
+            {
+                if (flingDir > 0) ListScroll.ScrollToTop(); else ListScroll.ScrollToBottom();
+                HideFling();
+                e.Handled = true;
+            };
+            flingBtn.MouseLeave += (s, e) => { flingHide.Stop(); flingHide.Start(); };
+            // beside the pointer, to its right, and inside the list (clear of its scroll bar)
+            flingBtn.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            var size = flingBtn.DesiredSize;
+            var x = Math.Max(8, Math.Min(at.X + 18, ListArea.ActualWidth - size.Width - 26));
+            var y = Math.Max(8, Math.Min(at.Y - size.Height / 2, ListArea.ActualHeight - size.Height - 8));
+            Canvas.SetLeft(flingBtn, x);
+            Canvas.SetTop(flingBtn, y);
+            flingLayer.Children.Add(flingBtn);
+            flingHide.Stop();
+            flingHide.Start();
+        }
+
+        void HideFling()
+        {
+            flingHide?.Stop();
+            if (flingBtn != null) flingLayer.Children.Remove(flingBtn);
+            flingBtn = null;
+            flingTurns.Clear();
         }
 
         /// <summary>The scrolls d is inside, innermost first.</summary>
@@ -5006,6 +5689,20 @@ namespace QuickDeploy
             body.Children.Add(line);
             body.Children.Add(Small(Texts.Get("set_hints_note"), new Thickness(0, 8, 0, 0)));
 
+            // the jump button by the pointer on a fast wheel (Fling)
+            body.Children.Add(Label("set_fling", new Thickness(0, 20, 0, 6)));
+            var fsw = new CheckBox { Style = (Style)FindResource("Switch"), IsChecked = Texts.FlingButton, VerticalAlignment = VerticalAlignment.Center };
+            var fline = new StackPanel { Orientation = Orientation.Horizontal };
+            fline.Children.Add(fsw);
+            fline.Children.Add(new TextBlock { Text = Texts.Get("set_fling_on"), Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) });
+            fsw.Click += (s, e2) =>
+            {
+                Texts.ShowFlingButton(fsw.IsChecked == true);
+                if (!Texts.FlingButton) HideFling();
+            };
+            body.Children.Add(fline);
+            body.Children.Add(Small(Texts.Get("set_fling_note"), new Thickness(0, 8, 0, 0)));
+
             // how the list is worked
             body.Children.Add(Label("set_keys", new Thickness(0, 20, 0, 6)));
             foreach (var key in new[] { "set_key_rename", "set_key_many" })
@@ -5143,9 +5840,33 @@ namespace QuickDeploy
             {
                 var d = Store.Load("gui.json");
                 d["list_offset"] = (long)Math.Round(ListScroll.VerticalOffset);
+                // the filter and the labels as they were left (the user, 2026-10-26: probes left
+                // out, or static assets only, should stay so)
+                List<object> Of(IEnumerable<string> set) => set.Cast<object>().ToList();
+                d["filters"] = new Dictionary<string, object>
+                {
+                    ["labels"] = Of(tagFilter), ["without"] = Of(tagExclude), ["from"] = Of(fromFilter), ["kind"] = Of(kindFilter),
+                };
                 Store.Save("gui.json", d);
             }
             catch (Exception x) when (x is IOException || x is UnauthorizedAccessException || x is FormatException) { }
+        }
+
+        bool filtersPruned;
+
+        /// <summary>The filter and the labels the window was closed with, before the first list.</summary>
+        void LoadFilters()
+        {
+            Dictionary<string, object> f;
+            try { f = Json.Obj(Store.Load("gui.json"), "filters"); }
+            catch (Exception x) when (x is IOException || x is UnauthorizedAccessException || x is FormatException) { return; }
+            if (f == null) return;
+            void Fill(HashSet<string> set, string key) { foreach (var v in Json.List(f, key).OfType<string>()) set.Add(v); }
+            Fill(tagFilter, "labels");
+            Fill(tagExclude, "without");
+            Fill(fromFilter, "from");
+            Fill(kindFilter, "kind");
+            kindFilter.Remove("loader");                    // loaders are no longer in the list
         }
 
         bool wentBack;
@@ -5194,6 +5915,7 @@ namespace QuickDeploy
             {
                 Process.Start(new ProcessStartInfo("steam://rungameid/553850") { UseShellExecute = true });
                 Foot(Texts.Get("launching"), "Blue");
+                WatchGame();
             }
             catch (Exception x) when (x is System.ComponentModel.Win32Exception || x is InvalidOperationException)
             {

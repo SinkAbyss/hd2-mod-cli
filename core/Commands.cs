@@ -61,7 +61,7 @@ namespace Hd2Mod
                                        Positionals = new[] { "mods" }, Many = true, Values = new[] { "--into" }, Flags = new[] { "--keep" }, Run = RelocateCmd }),
             Cmd("list", new Spec { Help = "the load order (the last wins)", Flags = new[] { "--files", "--paths" }, Run = List }),
             Cmd("add", new Spec { Help = "add a mod at the bottom: a zip (unpacked once) or a folder (used where it is)",
-                                  Positionals = new[] { "path" }, Values = new[] { "--name" }, Flags = new[] { "--copy" }, Run = Add }),
+                                  Positionals = new[] { "path" }, Values = new[] { "--name" }, Flags = new[] { "--copy", "--whole" }, Run = Add }),
             Cmd("replace", new Spec { Help = "a new version of a mod: same place in the order, same options " +
                                              "(the folder the old version was unpacked into is deleted; --keep-old keeps it)",
                                       Positionals = new[] { "mod", "path" }, Values = new[] { "--name" },
@@ -112,6 +112,9 @@ namespace Hd2Mod
             Cmd("leftovers", new Spec { Help = "the folders of old versions this program unpacked that no mod uses any more " +
                                                "(--delete with folders, or --delete --all, deletes them; the game is untouched)",
                                         Many = true, Flags = new[] { "--delete", "--all" }, Run = LeftoverCmd }),
+            Cmd("loader", new Spec { Help = "the loader in effect, for every profile: a loader of the library (name or id), or none; " +
+                                            "a deploy puts it after every mod and leaves the other loaders out",
+                                     Positionals = new[] { "which" }, Run = LoaderCmd }),
             Cmd("lua", new Spec { Help = "the mods' Lua before a deploy: whose start-up script (boot) runs, which loader that is, what each mod needs, what the game's Lua cannot run, the last session and the last crash (read only)",
                                   Run = LuaCmd }),
             Cmd("lua-syntax", new Spec { Help = "whether Lua files compile on the game's Lua (PUC 5.1, no LuaJIT): OK, or the line and why",
@@ -318,6 +321,15 @@ namespace Hd2Mod
             var p = Storage.AddFolder(a.Pos["path"]);
             o.WriteLine("added: " + p);
             var finds = Storage.Look(p, Library.Load());
+            foreach (var x in finds.Problems)
+                o.WriteLine("in it: " + x.Name + "'s mods, but its list (" + x.Where + ") cannot be read: " + x.Problem);
+            if (finds.NeedsConfig != null)
+            {
+                var (name, file, usual) = Importers.ConfigOf(finds.NeedsConfig);
+                o.WriteLine("in it: " + name + "'s mods, but its list (" + file + ") was not found where it usually is (" + usual +
+                            "): hd2qd import-" + finds.NeedsConfig + (finds.NeedsConfig == "hd2mm" ? " --dir <its folder>" : " --file <its " + file + ">"));
+                return;
+            }
             foreach (var m in finds.Managers)
             {
                 if (!a.Flag("--import"))
@@ -456,6 +468,15 @@ namespace Hd2Mod
             var cfg = Store.Config();
             var lib = Library.Load();
             var path = a.Pos["path"];
+            // a folder of mods (another manager's store, as HD2 Arsenal's): taken as one mod it became
+            // one entry holding all of them (players, 2026-10-26); it is a library folder
+            if (Directory.Exists(path) && !a.Flag("--whole"))
+            {
+                var held = Ops.ModsInside(path);
+                if (held >= 2)
+                    throw new ModError(Ops.Repr(path) + " holds " + held + " mods, each in a folder of its own: add it as a library folder  (hd2qd folder-add)" +
+                                       ", or as one mod with --whole", "library_folder", Paths.Abs(path));
+            }
             var folder = Ops.SourceFolder(path, cfg, a.Flag("--copy"));
             var mod = Ops.NewMod(folder, a.Value("--name"), Paths.Abs(path));
             if (File.Exists(path)) Origins.FromFile(mod, path);               // a download: where it came from
@@ -739,15 +760,36 @@ namespace Hd2Mod
                         case "needs_chef": o.WriteLine("  these run only on Chef Shared Loader, which is not the loader running: " + names); break;
                         case "same_name": o.WriteLine("  " + i.Detail + " is in " + names + "; only " + i.Mods[0].Name + "'s runs"); break;
                         case "cannot_run": o.WriteLine("  the game's Lua (5.1, no LuaJIT) cannot run " + names); break;
+                        case "too_big_for_chef": o.WriteLine("  " + names + " will not start: Chef Shared Loader reads no script over 4 MB at present"); break;
                         case "pack_alone": o.WriteLine("  " + i.Mods[0].Name + " translates " + i.Detail + (i.Mods.Count > 1 ? ", which is off" : ", which is not installed")); break;
                     }
                 }
             }
+            // what would not start under each loader, the one in effect first; nothing for no loader
+            // (no Lua mod starts, as everyone knows: the user, 2026-10-26)
+            var choices = LuaMods.Outcomes(lib, all).Where(x => x.Choice != null).ToList();
+            if (choices.Count > 0)
+            {
+                o.WriteLine("under each loader:");
+                var inEffect = Loaders.Chosen(lib)?.Id;
+                foreach (var (choice, outs) in choices.OrderByDescending(x => x.Choice?.Id == inEffect))
+                {
+                    var head = "  " + choice.Name + (choice.Id == inEffect ? " (in effect)" : "") + ": ";
+                    if (outs.Count == 0) { o.WriteLine(head + "every Lua mod starts"); continue; }
+                    foreach (var x in outs)
+                    {
+                        var why = x.Why == "no_loader" ? "no loader" : x.Why == "needs_chef" ? "Chef Shared Loader only"
+                                : x.Why == "too_big_for_chef" ? "script over Chef Shared Loader's 4 MB limit" : "start-up script replaced by " + x.Over?.Name + "'s";
+                        o.WriteLine(head + "will not start (" + why + "): " + string.Join(", ", x.Mods.Select(m => m.Name)));
+                    }
+                }
+            }
             // the loaders the library has, never every loader there is (the user, 2026-10-26)
+            var chosenId = Loaders.Chosen(lib)?.Id;
             string Have(params string[] kinds)
             {
                 var have = all.Where(x => x.Loader != null && kinds.Contains(x.Loader))
-                              .Select(x => LoaderName(x.Loader, x) + (x.Mod.Enabled ? "" : " (off)")).Distinct().ToList();
+                              .Select(x => LoaderName(x.Loader, x) + (x.Mod.Id == chosenId ? "" : x.Helper ? " (helping)" : " (not used)")).Distinct().ToList();
                 return have.Count > 0 ? "in the library: " + string.Join(", ", have) : "none in the library";
             }
             o.WriteLine("Lua mods:");
@@ -756,7 +798,7 @@ namespace Hd2Mod
                 var what = new List<string>();
                 if (ml.Loader != null) what.Add("loader: " + LoaderName(ml.Loader == "chef" ? "chef" : ml.Loader, ml));
                 if (ml.Needs == "any") what.Add("needs a loader (" + Have("bml", "chef", "bsl") + ")");
-                if (ml.Needs == "chef") what.Add("needs Chef Shared Loader" + (ml.NeedsWhy == "declared" ? ", as the mod declares" : "") + " (" + Have("chef") + ")");
+                if (ml.Needs == "chef") what.Add("needs Chef Shared Loader" + (ml.NeedsWhy == "declared" ? ", as the mod declares" : ml.NeedsWhy == "api" ? ": its script calls the chef interface that loader provides" : "") + " (" + Have("chef") + ")");
                 if (ml.PackOfName != null) what.Add("translation pack of " + (ml.PackOf?.Name ?? ml.PackOfName));
                 foreach (var s in ml.Broken)
                 {
@@ -781,10 +823,20 @@ namespace Hd2Mod
             var crash = LuaMods.Crashes(1).FirstOrDefault();
             if (crash.File != null)
             {
-                var then = LuaMods.DeployedAt(crash.When);
+                var (site, times, of) = LuaMods.SiteCount(crash.File);
+                var added = LuaMods.AddedAt(crash.When);
                 o.WriteLine("last crash: " + crash.When.ToString("yyyy-MM-dd HH:mm:ss") + " (" + crash.File + ")" +
-                            (then == null ? "; no deploy of this program recorded before it" : "; deployed then (" + then.Value.When.ToString("yyyy-MM-dd HH:mm") + "): " + string.Join(", ", then.Value.Mods)));
+                            (site == null ? "" : " at " + site + ", " + times + " of the last " + of + " crashes there" +
+                                                 (times >= LuaMods.Common ? " (a place the game crashes at often)" : "")) +
+                            (added == null ? "" : added.Count == 0 ? "; the deploy before it added no mod" : "; new in the deploy before it: " + string.Join(", ", added)));
             }
+        }
+
+        static void LoaderCmd(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var m = Loaders.Choose(lib, a.Pos["which"]);
+            o.WriteLine(m == null ? "loader: none" : "loader: " + m.Name + " (deploy to put it in the game)");
         }
 
         static void LuaSyntaxCmd(Args a, TextWriter o)

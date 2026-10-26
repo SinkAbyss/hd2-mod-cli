@@ -481,7 +481,7 @@ namespace Hd2Mod.Tests
         [Fact]
         public void DeleteRefusesAFolderThatIsNotTheModsOwn()
         {
-            Cli("add", Path.GetDirectoryName(one), "--name", "Everything");     // the folder that holds One, Two and Three
+            Cli("add", Path.GetDirectoryName(one), "--name", "Everything", "--whole");     // the folder that holds One, Two and Three
             Assert.Equal(1, Commands.Run(new[] { "delete", "Everything", "--yes" }, new StringWriter(), new StringWriter(), out var shared));
             Assert.Equal("shared", shared.Kind);
             Cli("add", Game, "--name", "The game");
@@ -806,6 +806,132 @@ namespace Hd2Mod.Tests
             Assert.Contains("the list came in the other way round", Cli("import-arsenal", "--file", arsenal, "--replace"));
             File.WriteAllText(arsenal, text, new UTF8Encoding(false));
             Assert.DoesNotContain("other way round", Cli("import-arsenal", "--file", arsenal, "--replace"));
+        }
+
+        /// <summary>A manager's list found but not read is said, never left out as if there were none
+        /// (the user, 2026-10-26: a newer Arsenal's list read as empty, and Arsenal was not offered).</summary>
+        [Fact]
+        public void AListFoundButNotReadIsSaid()
+        {
+            var local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+            var roaming = Environment.GetEnvironmentVariable("APPDATA");
+            try
+            {
+                Environment.SetEnvironmentVariable("LOCALAPPDATA", Path.Combine(Root, "local"));
+                Environment.SetEnvironmentVariable("APPDATA", Path.Combine(Root, "roaming"));
+                var file = Path.Combine(Root, "local", "hd2arsenal", "hd2a_data.json");
+                Directory.CreateDirectory(Path.GetDirectoryName(file));
+                // a shape of the future: entries that name their mods some other way
+                File.WriteAllText(file, J(new Dictionary<string, object>
+                {
+                    ["librarySystemVersion"] = 9L, ["deployedProfile"] = "p", ["modsList"] = new Dictionary<string, object>
+                    {
+                        ["p"] = new Dictionary<string, object> { ["label"] = "Main", ["mods"] = new List<object>
+                        {
+                            new Dictionary<string, object> { ["ref"] = "x1", ["enabled"] = true },
+                            new Dictionary<string, object> { ["ref"] = "x2", ["enabled"] = true },
+                        } },
+                    },
+                }), new UTF8Encoding(false));
+                Assert.Equal(1, Commands.Run(new[] { "import-arsenal" }, new StringWriter(), new StringWriter(), out var refused));
+                Assert.Equal("bad_format", refused.Kind);
+                var found = Importers.Found().Single(x => x.Key == "arsenal");
+                Assert.Equal("bad_format", found.ProblemKind);
+                Assert.Equal(0, found.Mods);
+                // a library folder that is Arsenal's store: the problem said, no file asked for, nothing loose
+                var store = Path.Combine(Root, "Arsenal Mods");
+                foreach (var n in new[] { "One_AR123456", "Two_AR654321" })
+                {
+                    Directory.CreateDirectory(Path.Combine(store, n));
+                    File.WriteAllText(Path.Combine(store, n, A + ".patch_0"), n);
+                }
+                var finds = Storage.Look(store, Library.Load());
+                Assert.Null(finds.NeedsConfig);
+                Assert.Single(finds.Problems);
+                Assert.Empty(finds.Loose);
+                Assert.Contains("cannot be read", Cli("folder-add", store));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("LOCALAPPDATA", local);
+                Environment.SetEnvironmentVariable("APPDATA", roaming);
+            }
+        }
+
+        /// <summary>A folder of mods given as one mod (another manager's store) is refused as a
+        /// library folder; --whole takes it as one all the same (players, 2026-10-26).</summary>
+        [Fact]
+        public void AFolderOfModsIsALibraryFolder()
+        {
+            var store = Path.Combine(Root, "store");
+            foreach (var n in new[] { "One", "Two" })
+            {
+                Directory.CreateDirectory(Path.Combine(store, n));
+                File.WriteAllText(Path.Combine(store, n, A + ".patch_0"), n);
+            }
+            Assert.Equal(1, Commands.Run(new[] { "add", store }, new StringWriter(), new StringWriter(), out var refused));
+            Assert.Equal("library_folder", refused.Kind);
+            Assert.Empty(Library.Load().Mods);
+            Assert.Contains("added", Cli("add", store, "--whole"));
+            // a mod with its options in folders is a mod, not a library folder
+            var mod = Mod("Opts", Files(("a/" + A + ".patch_0", "a"), ("b/" + A + ".patch_0", "b")),
+                          "{\"Name\": \"Opts\", \"Options\": [{\"Name\": \"A\", \"Include\": [\"a\"]}]}");
+            Assert.Contains("added", Cli("add", mod));
+        }
+
+        /// <summary>Arsenal 0.37 (librarySystemVersion 1): the mods in modsLibrary, a profile naming
+        /// them by uuid with its own on/off and choices (optionsConfig), and separators between them.
+        /// Read as the old shape it gave no mods, so Arsenal was not offered at all (a player's file,
+        /// 2026-10-26).</summary>
+        [Fact]
+        public void ImportArsenalLibraryFormat()
+        {
+            var one = Mod("One", Files((A + ".patch_0", "one")));
+            var two = Mod("Two", Files(("a/" + A + ".patch_0", "two-a"), ("b/" + A + ".patch_0", "two-b")),
+                          "{\"Name\": \"Two\", \"Options\": [{\"Name\": \"Pick\", \"SubOptions\": [" +
+                          "{\"Name\": \"A\", \"Include\": [\"a\"]}, {\"Name\": \"B\", \"Include\": [\"b\"]}]}]}");
+            object Sub(string name, bool on) => new Dictionary<string, object> { ["name"] = name, ["enabled"] = on };
+            var arsenal = Path.Combine(Root, "hd2a_data.json");
+            File.WriteAllText(arsenal, J(new Dictionary<string, object>
+            {
+                ["librarySystemVersion"] = 1L, ["deployedProfile"] = "default", ["userGameDir"] = Game,
+                ["modsLibrary"] = new List<object>
+                {
+                    new Dictionary<string, object> { ["uuid"] = "u1", ["label"] = "One", ["path"] = one, ["tags"] = new List<object> { "misc" }, ["options"] = new List<object>() },
+                    new Dictionary<string, object>
+                    {
+                        ["uuid"] = "u2", ["label"] = "Two", ["path"] = two,
+                        ["nexusData"] = new Dictionary<string, object> { ["modId"] = "555", ["fileId"] = "9", ["version"] = "1.2", ["updateTimestamp"] = 1700000000L },
+                        // the library's own defaults: A; the profile chooses B
+                        ["options"] = new List<object> { new Dictionary<string, object> { ["name"] = "Pick", ["enabled"] = true, ["suboptions"] = new List<object> { Sub("A", true), Sub("B", false) } } },
+                    },
+                },
+                ["modsList"] = new Dictionary<string, object>
+                {
+                    ["default"] = new Dictionary<string, object>
+                    {
+                        ["label"] = "Default Profile", ["mods"] = new List<object>
+                        {
+                            new Dictionary<string, object> { ["uuid"] = "separator-1", ["type"] = "separator", ["label"] = "Heading" },
+                            new Dictionary<string, object> { ["uuid"] = "u1", ["enabled"] = false, ["optionsConfig"] = new List<object>() },
+                            new Dictionary<string, object>
+                            {
+                                ["uuid"] = "u2", ["enabled"] = true,
+                                ["optionsConfig"] = new List<object> { new Dictionary<string, object> { ["name"] = "Pick", ["enabled"] = true, ["suboptions"] = new List<object> { Sub("A", false), Sub("B", true) } } },
+                            },
+                            new Dictionary<string, object> { ["uuid"] = "gone", ["enabled"] = true },          // in no library: no mod
+                        },
+                    },
+                },
+            }), new UTF8Encoding(false));
+            var read = Ops.ImportArsenal(arsenal).Lib.Mods;
+            Assert.Equal(new[] { "One", "Two" }, read.Select(m => m.Name).ToArray());
+            Assert.Equal(new[] { false, true }, read.Select(m => m.Enabled).ToArray());
+            Cli("import-arsenal", "--file", arsenal);
+            Assert.Equal(new[] { "two-b" }, PlanList());                        // the profile's choice, not the library's default
+            var nx = Library.Load().Mods.First(m => m.Name == "Two").Nexus;
+            Assert.Equal("555/9", nx.Mod + "/" + nx.File);
+            Assert.Equal(new[] { "Misc" }, Library.Load().Mods.First(m => m.Name == "One").Tags.ToArray());
         }
 
         /// <summary>Every profile of another manager comes in as a profile of its own, with its
@@ -1424,12 +1550,16 @@ namespace Hd2Mod.Tests
                 BitConverter.GetBytes(Deploy.LuaType).CopyTo(a, 0x48 + 8);
                 return a;
             }
-            Cli("add", Mod("Loader", new Dictionary<string, byte[]> { [A + ".patch_0"] = Lua(Deploy.LoaderScripts[0]) }));
+            // a loader is one the Lua scan names (the user, 2026-10-26): a boot of its own is not enough
+            Cli("add", Mod("Loader", new Dictionary<string, byte[]> { [A + ".patch_0"] = LuaArchive((LuaMods.BootId, "-- Boot Mod Loader\nlocal MARKER = \"boot-mod-loader-0.12.1\"\n")) }));
+            Cli("add", Mod("Own boot", new Dictionary<string, byte[]> { [A + ".patch_0"] = LuaArchive((LuaMods.BootId, "function init() end\n")) }));
             Cli("add", Mod("Plain", new Dictionary<string, byte[]> { [A + ".patch_0"] = Lua(0x1234567890ABCDEF) }));
             var st = (Dictionary<string, object>)Json.Parse(Cli("state"));
             var loader = Json.List(st, "mods").Cast<Dictionary<string, object>>().ToDictionary(m => (string)m["name"], m => (bool)m["loader"]);
             Assert.True(loader["Loader"]);
+            Assert.False(loader["Own boot"]);
             Assert.False(loader["Plain"]);
+            Assert.Equal("bml", Json.List(st, "mods").Cast<Dictionary<string, object>>().Single(m => (string)m["name"] == "Loader")["loader_kind"]);
         }
 
         [Fact]
@@ -1630,6 +1760,55 @@ namespace Hd2Mod.Tests
                 Assert.Equal(Path.Combine(plain, "Two"), two.Path);                        // where it is, not copied
                 Assert.DoesNotContain("mod folders", Cli("folder-add", plain));
 
+                // a manager's store whose list is not where it usually is: nothing loose, its list asked for
+                var arsenalStore = Path.Combine(Root, "Arsenal Mods");
+                foreach (var n in new[] { "One_AR123456", "Two_AR654321" })
+                {
+                    Directory.CreateDirectory(Path.Combine(arsenalStore, n));
+                    File.WriteAllText(Path.Combine(arsenalStore, n, A + ".patch_0"), n);
+                }
+                var store = Storage.Look(arsenalStore, Library.Load());
+                Assert.Equal("arsenal", store.NeedsConfig);
+                Assert.Empty(store.Loose);
+                Assert.Contains("HD2 Arsenal's mods, but its list (hd2a_data.json) was not found", Cli("folder-add", arsenalStore));
+                // the list the player chooses: read, and it must list mods in this folder
+                var list = Path.Combine(Root, "elsewhere", "hd2a_data.json");
+                Directory.CreateDirectory(Path.GetDirectoryName(list));
+                File.WriteAllText(list, J(new Dictionary<string, object>
+                {
+                    ["deployedProfile"] = "p", ["modsList"] = new Dictionary<string, object>
+                    {
+                        ["p"] = new Dictionary<string, object> { ["label"] = "Main", ["mods"] = new List<object>
+                        {
+                            new Dictionary<string, object> { ["uuid"] = "u1", ["label"] = "One", ["path"] = Path.Combine(arsenalStore, "One_AR123456"), ["enabled"] = true },
+                            new Dictionary<string, object> { ["uuid"] = "u2", ["label"] = "Two", ["path"] = Path.Combine(arsenalStore, "Two_AR654321"), ["enabled"] = false },
+                        } },
+                    },
+                }), new UTF8Encoding(false));
+                var src = Importers.FromChosenFile("arsenal", list, arsenalStore);
+                Assert.Equal(2, src.Mods);
+                Assert.Equal(list, src.File);
+                Assert.Equal(0, Importers.FromChosenFile("arsenal", list, plain).Mods);              // another folder's list
+                // an Echelon store: named "(12 hex)", the files in numbered set folders, no manifest
+                var echelonStore = Path.Combine(Root, "Echelon mods");
+                foreach (var n in new[] { "One (0123456789ab)", "Two (ba9876543210)" })
+                {
+                    Directory.CreateDirectory(Path.Combine(echelonStore, n, "opt", "0"));
+                    File.WriteAllText(Path.Combine(echelonStore, n, "opt", "0", A + ".patch_0"), n);
+                }
+                Assert.Equal("echelon", Storage.Look(echelonStore, Library.Load()).NeedsConfig);
+                // HD2ModManager's Mods folder away from its enabled.json: known by the manifests it wrote
+                var hd2mmMods = Path.Combine(Root, "Copied", "Mods");
+                foreach (var (n, text) in new[] { ("One", "A locally imported mod."), ("Two", "Its own text.") })
+                {
+                    Directory.CreateDirectory(Path.Combine(hd2mmMods, n));
+                    File.WriteAllText(Path.Combine(hd2mmMods, n, A + ".patch_0"), n);
+                    File.WriteAllText(Path.Combine(hd2mmMods, n, "manifest.json"), "{\"Guid\": \"" + Guid.NewGuid() + "\", \"Name\": \"" + n + "\", \"Description\": \"" + text + "\"}");
+                }
+                Assert.Equal("hd2mm", Storage.Look(hd2mmMods, Library.Load()).NeedsConfig);
+                // a plain folder of mods with manifests of their own is nobody's store
+                Assert.Null(Importers.StoreOf(plain));
+
                 // our own older version in the default folder is a leftover, not a mod to add
                 var mods = Path.Combine(Root, "Default Mods");
                 Cli("init", "--mods-dir", mods);
@@ -1707,7 +1886,7 @@ namespace Hd2Mod.Tests
             Assert.Equal(new[] { "one", "two" }, PlanList());
 
             // a library folder is not a mod's own folder: never moved
-            Cli("add", target, "--name", "The whole folder");
+            Cli("add", target, "--name", "The whole folder", "--whole");
             Assert.Equal(1, Commands.Run(new[] { "relocate", "The whole folder", "--into", Path.Combine(Root, "x") }, new StringWriter(), new StringWriter(), out var refused));
             Assert.Equal("protected", refused.Kind);
         }

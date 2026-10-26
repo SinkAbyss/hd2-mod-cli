@@ -50,6 +50,7 @@
 
   <ItemGroup>
     <Resource Include="app.ico" />
+    <Resource Include="logo.png" />
   </ItemGroup>
 
 </Project>

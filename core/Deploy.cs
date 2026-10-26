@@ -101,9 +101,9 @@ namespace Hd2Mod
         {
             var counters = new Dictionary<string, int>();
             var out_ = new List<Wanted>();
-            foreach (var mod in lib.Mods)
+            // the loader in effect last, the other loaders not at all (Loaders)
+            foreach (var mod in Loaders.DeployOrder(lib))
             {
-                if (!mod.Enabled) continue;
                 string problem = null;
                 List<string> folders = null;
                 if (!Directory.Exists(mod.Path)) problem = "its folder is gone: " + mod.Path;
@@ -151,6 +151,9 @@ namespace Hd2Mod
                     }
                 }
             }
+            // a boot that only starts its own mod goes to the game off the start-up slot, for
+            // Boot Mod Loader to run (GuestBoots; the user, 2026-10-26)
+            GuestBoots.Apply(out_);
             return out_;
         }
 
@@ -374,7 +377,10 @@ namespace Hd2Mod
                                        Action<string> log = null)
         {
             var data = Data(game);
-            var d = Compute(lib, game, verify);
+            Diff d;
+            Loaders.ReadAll = true;               // every archive read: a helper is not left out
+            try { d = Compute(lib, game, verify); }
+            finally { Loaders.ReadAll = false; }
             var r = new DeployResult { Kept = d.Kept, Moved = d.Moves.Count, Written = d.Writes.Count, Deleted = d.Deleted, Files = d.All.Count };
             if (dryRun)
             {

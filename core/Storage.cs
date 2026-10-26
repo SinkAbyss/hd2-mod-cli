@@ -30,6 +30,13 @@ namespace Hd2Mod
         public List<ImportSource> Managers = new List<ImportSource>();
         /// <summary>Mod folders here that no manager lists and the library does not have.</summary>
         public List<string> Loose = new List<string>();
+        /// <summary>The folder is this manager's store (Importers.StoreOf), and its list was not found
+        /// where it usually is, or lists none of these mods: nothing is offered loose, the player is
+        /// asked for the list file. Null otherwise.</summary>
+        public string NeedsConfig;
+        /// <summary>Lists found and not read (ImportSource.Problem): said, so a list read wrong is
+        /// never taken for no list at all.</summary>
+        public List<ImportSource> Problems = new List<ImportSource>();
     }
 
     public static class Storage
@@ -73,10 +80,12 @@ namespace Hd2Mod
             bool Readable(Exception e) => e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException || e is InvalidCastException;
             var have = new HashSet<string>(lib.Mods.Select(m => Key(m.Path)), StringComparer.OrdinalIgnoreCase);
             var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);      // every folder a manager lists
+            var listed = new HashSet<string>();                                       // the managers whose list has mods here
             var finds = new FolderFinds();
             void Offer(string key, string name, string where, string dir, Library theirs, bool all)
             {
                 foreach (var m in theirs.Mods) claimed.Add(Key(m.Path));
+                if (all || theirs.Mods.Any(m => Inside(m.Path))) listed.Add(key);
                 // the mods an import would add: the same rule as the import (folder, Guid or name)
                 var mine = new Library { Mods = new List<Mod>(lib.Mods) };
                 theirs.Mods = theirs.Mods.Where(m => all || Inside(m.Path)).ToList();
@@ -84,7 +93,7 @@ namespace Hd2Mod
                 if (n > 0) finds.Managers.Add(new ImportSource { Key = key, Name = name, Where = where, Dir = dir, Mods = n });
             }
             try { if (Store.ArsenalFile() != null) Offer("arsenal", "HD2 Arsenal", root, null, Ops.ImportArsenal().Lib, false); }
-            catch (Exception e) when (Readable(e)) { }
+            catch (Exception e) when (Readable(e)) { finds.Problems.Add(ImportSource.Unreadable("arsenal", "HD2 Arsenal", Store.ArsenalFile(), e)); }
             // HD2ModManager: the folder given is its storage (or the program's folder, which names
             // it: then all of its mods, wherever that is), or its usual storage is in the folder
             var usual = Importers.Hd2mmDir();
@@ -95,9 +104,18 @@ namespace Hd2Mod
                     bool isUsual = usual != null && string.Equals(Key(dir), Key(usual), StringComparison.OrdinalIgnoreCase);
                     Offer("hd2mm", "HD2ModManager", Path.Combine(dir, "Mods"), isUsual ? null : dir, Importers.ReadHd2mm(dir), dir == named);
                 }
-                catch (Exception e) when (Readable(e)) { }
+                catch (Exception e) when (Readable(e)) { finds.Problems.Add(ImportSource.Unreadable("hd2mm", "HD2ModManager", Path.Combine(dir, "enabled.json"), e)); }
             try { if (Importers.EchelonFile() != null) Offer("echelon", "Echelon", root, null, Importers.ReadEchelon(), false); }
-            catch (Exception e) when (Readable(e)) { }
+            catch (Exception e) when (Readable(e)) { finds.Problems.Add(ImportSource.Unreadable("echelon", "Echelon", Importers.EchelonFile(), e)); }
+            // a manager's store whose list was not found: imported through that list or not at all
+            // (the user, 2026-10-26: without it there is no order, no switches, no options)
+            var store = Importers.StoreOf(root);
+            if (store != null && !listed.Contains(store))
+            {
+                // its list was found and could not be read: that is said, not a file to look for
+                if (!finds.Problems.Any(p => p.Key == store)) finds.NeedsConfig = store;
+                return finds;
+            }
             var cfg = Store.Config();
             List<string> subs;
             try { subs = Directory.EnumerateDirectories(root).ToList(); }

@@ -14,6 +14,24 @@ writes **no mod data at all**: only file names and directory entries change,
 plus a deploy record of about 100 KB. A purge-and-copy manager writes the whole
 mod set every time.
 
+It also looks after the Lua mod loaders, so the player never has to think about
+their order:
+
+- **One loader, chosen once.** Boot Mod Loader, Chef Shared Loader and the like
+  are not in the mod list. One is chosen in a panel, for every profile, and a
+  deploy always puts it last, so its start-up script is the one the game runs.
+- **Two loaders working together.** Mods written only for Chef Shared Loader are
+  recognised from their scripts. With Boot Mod Loader 0.13.0 or later in effect,
+  a deploy also puts Chef Shared Loader in the game, and Boot Mod Loader hands
+  those mods over to it through the hand-off Chef Shared Loader provides for
+  other loaders. The hand-off is Chef's; this program's part is telling which
+  mods need it and deploying it. Tried in game on 2026-10-26: Boot Mod Loader
+  started its 8 mods, Chef Shared Loader started the one made for it, and no mod
+  was started twice.
+- **Start-up scripts that are not a loader's.** A mod that brings its own `boot`
+  (Objective Tracker 0.6.7) is deployed off the start-up slot and run by Boot
+  Mod Loader.
+
 It comes in two parts that share one library and one set of settings:
 
 - **HD2 Mod Quick Deploy** — the window, for players;
@@ -98,7 +116,7 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 | Mod list (middle) | The load order, top to bottom: **a mod lower in the list wins**. Each row: its number, its switch, its picture, its name, and under the name its version, what is chosen, a **LUA** tag when it runs scripts in the game and a **LOADER** tag when it replaces one of the game's own scripts the way a mod loader does; on the right a mark that checks this one mod for updates, its size and how it is deployed. Dropping a zip or a mod folder on the list installs it. Double-click a mod to give it a name of your own (the name it came with stays in its details); Ctrl or Shift takes several mods at once: drag one of them and they all move together, in the order they have; the right button turns them all on or off, moves them, removes them or deletes them from the disk. |
 | Options (open a row with its arrow) | A mod's options as cards with their pictures, names and descriptions. A group is *pick one* (Ctrl+click for more); parts can each be on or off. |
 | Labels page | Your own labels for mods, with how many mods carry each one: make one, rename it, delete it, and tick the mods that carry it. |
-| Details (right) | The author's description (or, when the mod folder has none, what its site says), the load order, the folder, **Delete** (red), **Remove mod** and **Open its folder**; what the next deploy does to this mod (kept, renamed, new), its conflicts with other mods (each resource by its type, and by its name when HD2SDK is installed, e.g. "Model · Laser Sight W/ Flashlight"), the resources another mod ships byte for byte alike (shared, not fought over), and its source: **Match the source** asks the site what the mod is called and fills in its name, version, author, description and picture. |
+| Details (right) | The author's description (or, when the mod folder has none, what its site says), the load order, the folder, **Delete** (red), **Remove** and **Open folder**; what the next deploy does to this mod (kept, renamed, new), its conflicts with other mods (each resource by its type, and by its name when HD2SDK is installed, e.g. "Model · Laser Sight W/ Flashlight"), the resources another mod ships byte for byte alike (shared, not fought over), and its source: **Match the source** asks the site what the mod is called and fills in its name, version, author, description and picture. |
 | Footer | What a deploy would do; **Deploy** and **Launch game**. A deploy never needs a purge first: it changes only what differs. **Restore vanilla** is at the bottom of the deploy target card, for playing without mods. |
 
 ### Everyday use
@@ -116,7 +134,7 @@ updating a 5 MB mod writes 5 MB, not 2.84 GB.
 A new version of a mod: right-click it → *New version from a zip / a folder*.
 It keeps its place in the list and its options.
 
-**Remove mod** only takes a mod out of the library; its files stay where they
+**Remove** only takes a mod out of the library; its files stay where they
 are. **Delete** (the red button, or right-click → *Delete from the disk…*)
 takes it off the disk for good: out of the library, out of the game (a deploy
 runs at once) and its folder deleted, not moved to the Recycle Bin. The zip it
@@ -200,13 +218,18 @@ mod's files and never chooses for you.
 
 | What it checks | What you see |
 |---|---|
-| **Start-up scripts** | Which mod's `boot` the game runs, and whose does not. A mod whose `boot` does not run has **Use this mod's start-up script** in its details: it moves the mod right after the one that runs now. |
-| **The loader each mod needs** | Read from the script's first lines. `-- HD2-Addon:` starts on Boot Mod Loader or Chef Shared Loader; `-- HD2-Requires: chef-shared-loader` (or `-- HD2-Boot:`) only on Chef Shared Loader. The details name only the loaders your library has. The list says when no loader is on, when a mod needs one that is not in effect, and when two loaders are on. |
-| **Scripts the game's Lua cannot run** | Since the 2026-10-20 update the game runs plain Lua 5.1, without LuaJIT. A script that does not compile (goto, LuaJIT's `ULL` numbers, Lua 5.2+ operators, a BOM, more than 200 locals or 60 upvalues in a function, and the rest), LuaJIT bytecode, or `ffi`, `bit` or `jit` used with no fallback is marked **Cannot run**, with what it uses (FFI, LuaJIT's 64-bit numbers, goto, …) and on what that judgement rests at present. The syntax check follows PUC Lua 5.1's own lexer and parser; it agreed with PUC Lua 5.1 on all 15,394 scripts it was compared on (`tests/lua_syntax_vs_puc.py`). Comments and strings never count. |
+| **A start-up script that is no loader's** | A mod that brings its own `boot` but starts only itself (Objective Tracker 0.6.7) would take the game's one start-up slot, and the load order would decide whether it or the loader runs. With Boot Mod Loader 0.12.0 or later in effect, a deploy takes that script off the slot: the game gets a copy of the archive in which the script, marked `-- HD2-Guest-Boot: <mod>`, is run by Boot Mod Loader after the mods. The library is not changed, and the load order does not matter. With an older loader, or none, nothing is changed. |
+| **Script names** | Each mod's details list its scripts by the names Boot Mod Loader's log and Mod Lag Watchdog print, such as `mods/max/maelstrom_traverse`. Typing such a name into the search finds the mod. |
+| **The loader** | Loaders (Boot Mod Loader, Chef Shared Loader, Bingus Shared Loader) are not in the mod list: the panel on the left lists them, and one is chosen there for every profile; no loader is a choice too. A deploy puts the chosen one after every mod, so its start-up script is the one the game runs, and leaves the other loaders out: their place in the list and their own switches do not matter. A loader's name opens its details. The panel shows only each loader's state (in effect, helping, not used), and no panel appears when the library has no loader. Its **i** button opens the details: for every loader, the one in effect too, which mods would not start with it, and why (Chef Shared Loader only, a script over Chef's 4 MB limit, a start-up script replaced by another), or that every Lua mod starts; for Chef helping, the mods it starts. Every line in them can be selected and copied. A click on a loader's ring shows at once and is saved in the background. |
+| **Chef Shared Loader as a helper** | With Boot Mod Loader 0.13.0 or later in effect, Chef Shared Loader in the library, and a mod on that runs only on Chef (it says so, or its script calls the `chef` interface Chef provides), a deploy also puts Chef in the game, just before Boot Mod Loader. Boot Mod Loader starts its own mods, then hands the ones made for Chef to it through Chef's documented hand-off. Their settings are in Chef's F9 menu; the other mods keep the settings window. The panel shows Chef as helping. |
+| **Start-up scripts** | Which mod's `boot` the game runs, and whose does not. |
+| **Scripts too big for Chef Shared Loader** | Chef Shared Loader 1.2.1 reads no Lua script over 4 MB. A mod it would start with a bigger script is marked **will not start**, with its size; the loader panel's details name those mods before Chef is chosen. Boot Mod Loader has no such limit. |
+| **Start-up scripts under Chef Shared Loader** | Chef Shared Loader runs the start-up scripts deployed before it as well, so with Chef in effect a mod's own `boot` that starts only itself is in no conflict either; its details say Chef runs it. |
+| **The loader each mod needs** | Read from the script's first lines. `-- HD2-Addon:` starts on Boot Mod Loader or Chef Shared Loader; `-- HD2-Requires: chef-shared-loader` (or `-- HD2-Boot:`) only on Chef Shared Loader. The details name only the loaders your library has. The list says when no loader is in effect and when a mod needs one that is not. |
+| **Scripts the game's Lua cannot run** | Since the 2026-10-20 update the game runs plain Lua 5.1, without LuaJIT. A script that does not compile (goto, LuaJIT's `ULL` numbers, Lua 5.2+ operators, a BOM, more than 200 locals or 60 upvalues in a function, and the rest), LuaJIT bytecode, or `ffi`, `bit` or `jit` used with no fallback is marked **Cannot run**, with what it uses (FFI, LuaJIT's 64-bit numbers, goto, …) and one sentence on just that: the game does not accept or provide it at present, nor do the loaders in the library. The syntax check follows PUC Lua 5.1's own lexer and parser; it agreed with PUC Lua 5.1 on all 15,394 scripts it was compared on (`tests/lua_syntax_vs_puc.py`). Comments and strings never count. |
 | **Two mods with one name** | Two mods declaring the same `mods/<author>/<name>`: only the later one runs. |
 | **Translation packs** | A pack (the same author's folder, the mod's name and a language, wrapping the old menus' calls, as ActionCam简体中文 does) is one small line under the mod it translates, with its own tick, and is kept right after that mod in the load order. When that mod is off or not installed, the list says the translation does not apply. |
 | **The last session** | Boot Mod Loader's log of the last launch: which mods started, how long each took, and which failed or did not compile, with the reason. |
-| **A crash** | When the game leaves a new crash dump, the left column shows when it crashed (the time the dump was written) and the mods this program had deployed then. |
 
 All of it is read outside the game, before a deploy: nothing runs in the game. The list never waits for it: what was found is kept in `lua_scan.json`, and an archive not read yet is read in the background, its findings shown a moment later.
 
@@ -278,6 +301,7 @@ A change made on the command line shows in an open window half a second later.
 | `tags` | Your own labels, with how many mods carry each. |
 | `tag MOD NAME...` / `untag MOD NAME...` | Put labels on a mod, or take them off (`--all` takes them all off). |
 | `tag-rename OLD NEW` / `tag-delete NAME` | Rename a label everywhere, or take it off every mod. |
+| `loader <name\|none>` | The loader in effect, for every profile: a loader of the library by name or id, or `none`. A deploy puts it after every mod and leaves the other loaders out. |
 | `lua` | The mods' Lua before a deploy: whose start-up script runs, which loader that is, what each mod needs, what the game's Lua cannot run, the last session and the last crash (read only). |
 | `lua-syntax FILE...` | Whether Lua files compile on the game's Lua (PUC 5.1, no LuaJIT): OK, or the line and why. |
 | `conflicts [-v]` | Resources that more than one mod ships, and which one wins; the ones every mod ships byte for byte alike are named as shared, not as a conflict. `-v` lists each resource's type and id, and its name from HD2SDK's name list when HD2SDK is installed. |
@@ -357,6 +381,12 @@ Helldivers 2 的 mod 管理器，具备两项一般管理器所没有的特性�
 
 因此，一次典型的部署**不到半秒**（实测 0.13–0.29 秒），且**不写入任何 mod 数据**：仅更改文件名和目录项，另写入约 100 KB 的部署记录。“清空再全部复制”的管理器则每次都需重新写入整套 mod。
 
+此外，本程序会处理 Lua mod 的加载器，玩家无需考虑加载器的顺序：
+
+- **只选一个加载器**：Boot Mod Loader、Chef Shared Loader 等加载器不出现在 mod 列表中，而是在面板中选择一个，对所有配置档案通用。部署时它总是放在最后，游戏运行的就是它的启动脚本。
+- **两个加载器协同工作**：程序会从脚本中识别仅能由 Chef Shared Loader 启动的 mod。生效的是 Boot Mod Loader 0.13.0 或更新版本时，部署会把 Chef Shared Loader 一并放入游戏目录，再由 Boot Mod Loader 通过 Chef Shared Loader 为其他加载器提供的交接方式，把这些 mod 交给它启动。交接方式由 Chef 提供；本程序负责判断哪些 mod 需要它，并完成部署。2026-10-26 游戏内实测：Boot Mod Loader 启动了自己的 8 个 mod，Chef Shared Loader 启动了为它编写的 1 个，没有任何 mod 被重复启动。
+- **非加载器的启动脚本**：自带 `boot` 的 mod（如 Objective Tracker 0.6.7）部署时会移出启动入口，改由 Boot Mod Loader 运行。
+
 本程序分为两部分，共用同一个 mod 库和同一份设置：
 
 - **HD2 Mod Quick Deploy**：图形界面，面向玩家；
@@ -417,7 +447,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 | 中间 · mod 列表 | 加载顺序自上而下，**越靠下优先级越高**。每行显示：序号、开关、图片、名称，名称下方为版本、已选内容、**LUA** 标签（会在游戏中运行脚本的 mod）与 **LOADER** 标签（替换了游戏自带脚本、相当于自带加载器的 mod）；右侧为单独检查该 mod 更新的图标、大小与部署方式。将 zip 压缩包或 mod 文件夹拖到列表上即可安装。双击 mod 可自定义名称（原名保留在详情中）；按住 Ctrl 或 Shift 可多选：拖动其中一个，选中的 mod 会按原有顺序一起移动；右键可一起启用、停用、移动、移除或从硬盘删除 |
 | 可选内容（点击行左侧箭头展开） | 以卡片显示图片、名称和作者说明。一组内为单选（Ctrl+点击可多选）；附加内容可分别开关 |
 | 标签页 | 自己给 mod 贴的标签，显示每个标签上有多少 mod：新建、重命名、删除，并勾选属于该标签的 mod |
-| 右侧 · 详情 | 作者说明（mod 文件夹中没有说明时，显示来源网站的说明）、加载顺序、文件夹，以及 **删除**（红色外框）、**移除 MOD**、**打开文件夹**；下次部署对该 mod 的处理（保留、重命名、新增），与其他 mod 的资源冲突（逐项列出资源类型；安装了 HD2SDK 时还会显示名称，如“模型 · Laser Sight W/ Flashlight”），以及与其他 mod 内容完全相同的资源（属于共用，不算冲突），以及来源：点击 **匹配来源信息** 可从网站取回该 mod 的名称、版本、作者、说明和图片 |
+| 右侧 · 详情 | 作者说明（mod 文件夹中没有说明时，显示来源网站的说明）、加载顺序、文件夹，以及 **删除**（红色外框）、**移除**、**打开文件夹**；下次部署对该 mod 的处理（保留、重命名、新增），与其他 mod 的资源冲突（逐项列出资源类型；安装了 HD2SDK 时还会显示名称，如“模型 · Laser Sight W/ Flashlight”），以及与其他 mod 内容完全相同的资源（属于共用，不算冲突），以及来源：点击 **匹配来源信息** 可从网站取回该 mod 的名称、版本、作者、说明和图片 |
 | 底部 | 部署将执行的操作；**部署**、**启动游戏**。部署前无需清空，部署只处理有差别的文件 |
 
 ### 日常使用
@@ -430,7 +460,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 更新 mod 版本：右键该 mod，选择“换新版本（zip）”或“换新版本（文件夹）”，加载顺序和可选内容保持不变。
 
-**移除 MOD** 仅将其从库中移除，文件保留在原处。**删除**（红色外框按钮，或右键选择“从硬盘删除…”）会将其从硬盘上彻底移除：从库中移除、立即部署一次以将其移出游戏目录，并永久删除其文件夹（不进入回收站）。添加时使用的 zip 不会删除。游戏运行时，或文件夹并非该 mod 自身的文件夹（盘符、游戏目录、库中其他 mod 也在使用的文件夹）时，删除将被拒绝，且不做任何更改。
+**移除** 仅将其从库中移除，文件保留在原处。**删除**（红色外框按钮，或右键选择“从硬盘删除…”）会将其从硬盘上彻底移除：从库中移除、立即部署一次以将其移出游戏目录，并永久删除其文件夹（不进入回收站）。添加时使用的 zip 不会删除。游戏运行时，或文件夹并非该 mod 自身的文件夹（盘符、游戏目录、库中其他 mod 也在使用的文件夹）时，删除将被拒绝，且不做任何更改。
 
 ### MOD 库文件夹（存储页）
 
@@ -474,13 +504,18 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 | 检查内容 | 显示方式 |
 |---|---|
-| **启动脚本** | 游戏运行的是哪个 mod 的 `boot`，哪些不会运行。启动脚本不会运行的 mod，详情中有 **改由此 mod 的启动脚本生效**：将该 mod 移到当前生效者之后。 |
-| **每个 MOD 需要的加载器** | 读取脚本开头几行。`-- HD2-Addon:` 可由 Boot Mod Loader 或 Chef Shared Loader 启动；`-- HD2-Requires: chef-shared-loader`（或 `-- HD2-Boot:`）仅能由 Chef Shared Loader 启动。详情中只列出库中已有的加载器。没有启用加载器、需要的加载器未生效、同时启用两个加载器时，均会提示。 |
-| **游戏无法运行的脚本** | 2026-10-20 更新后，游戏使用 Lua 5.1，不再是 LuaJIT。无法编译的脚本（goto、LuaJIT 的 `ULL` 数字、Lua 5.2 及以后的运算符、BOM、单个函数超过 200 个局部变量或 60 个上值等）、LuaJIT 字节码、以及没有备用方案地使用 `ffi`、`bit`、`jit` 的脚本，标为 **无法运行**，并说明它用到了什么（FFI、LuaJIT 的 64 位整数写法、goto 等），以及这一判断目前依据的情况。语法检查按照 PUC Lua 5.1 自身的词法和语法分析器实现，与 PUC Lua 5.1 对比的 15,394 个脚本结论全部一致（`tests/lua_syntax_vs_puc.py`）。注释与字符串中的内容不计。 |
+| **非加载器的启动脚本** | 自带 `boot`、但只启动它自己的 mod（如 Objective Tracker 0.6.7）会占用游戏唯一的启动入口，由加载顺序决定它和加载器谁运行。生效的是 Boot Mod Loader 0.12.0 或更新版本时，部署会把这个脚本从入口上移开：游戏目录中是该存档的副本，脚本标记为 `-- HD2-Guest-Boot: <mod>`，由 Boot Mod Loader 在其他 mod 之后运行。mod 库中的文件不变，加载顺序也不影响结果。加载器版本较旧或没有加载器时，不做任何改动。 |
+| **脚本名称** | 每个 mod 的详情列出其脚本，名称与 Boot Mod Loader 日志和 Mod Lag Watchdog 中显示的一致，如 `mods/max/maelstrom_traverse`。在搜索框中输入这样的名称即可找到对应的 mod。 |
+| **加载器** | 加载器（Boot Mod Loader、Chef Shared Loader、Bingus Shared Loader）不在 mod 列表中，而在左侧面板中列出，并在那里选择一个，对所有配置档案通用；也可以选择不使用加载器。部署时，选中的加载器放在所有 mod 之后，游戏运行的就是它的启动脚本；其他加载器不部署。它们在列表中的位置和各自的开关都不影响结果。点击加载器的名称可查看详情。面板上只显示各加载器的状态（生效中、协助中、未使用）；库中没有加载器时不显示该面板。点击面板的 **i** 按钮可查看详细信息：每个加载器（包括生效中的那个）选用时哪些 mod 不会启动及原因（仅能由 Chef Shared Loader 启动、脚本超过 Chef 的 4 MB 上限、启动脚本被其他 mod 的取代），或者所有 Lua mod 均可启动；Chef 协助时，列出它启动的 mod。其中每一行都可以选择和复制。点击加载器前的圆圈会立即显示切换，保存在后台进行。 |
+| **Chef Shared Loader 协助** | 生效的是 Boot Mod Loader 0.13.0 或更新版本、库中有 Chef Shared Loader、并且启用了仅能由 Chef 启动的 mod（mod 自身声明，或脚本调用了 Chef 提供的 `chef` 接口）时，部署会把 Chef 一并放入游戏目录，位于 Boot Mod Loader 之前。Boot Mod Loader 先启动自己的 mod，再通过 Chef 公开的交接方式，把只认 Chef 的 mod 交给它启动。这些 mod 的设置在 Chef 的 F9 菜单中，其他 mod 仍使用设置窗口。左侧面板中 Chef 显示为“协助中”。 |
+| **启动脚本** | 游戏运行的是哪个 mod 的 `boot`，哪些不会运行。 |
+| **超出 Chef Shared Loader 上限的脚本** | Chef Shared Loader 1.2.1 不读取超过 4 MB 的 Lua 脚本。将由它启动、但脚本超过此大小的 mod 会标为 **不会启动**，并注明脚本大小；选用 Chef 之前，加载器面板的详细信息中就会列出这些 mod。Boot Mod Loader 没有这一限制。 |
+| **Chef Shared Loader 下的启动脚本** | Chef Shared Loader 也会运行部署在它之前的启动脚本，因此 Chef 生效时，只启动自身的 mod 自带的 `boot` 同样不构成冲突；该 mod 的详情会说明由 Chef 运行。 |
+| **每个 MOD 需要的加载器** | 读取脚本开头几行。`-- HD2-Addon:` 可由 Boot Mod Loader 或 Chef Shared Loader 启动；`-- HD2-Requires: chef-shared-loader`（或 `-- HD2-Boot:`）仅能由 Chef Shared Loader 启动。详情中只列出库中已有的加载器。没有生效的加载器、需要的加载器未生效时，均会提示。 |
+| **游戏无法运行的脚本** | 2026-10-20 更新后，游戏使用的是 Lua 5.1，而非 LuaJIT。无法编译的脚本（goto、LuaJIT 的 `ULL` 数字、Lua 5.2 及以后的运算符、BOM、单个函数超过 200 个局部变量或 60 个上值等）、LuaJIT 字节码、以及没有备用方案地使用 `ffi`、`bit`、`jit` 的脚本，标为 **无法运行**，并说明它用到了什么（FFI、LuaJIT 的 64 位整数写法、goto 等），再用一句话说明游戏目前不接受或不提供这一项，库中的加载器也未提供。语法检查按照 PUC Lua 5.1 自身的词法和语法分析器实现，与 PUC Lua 5.1 对比的 15,394 个脚本结论全部一致（`tests/lua_syntax_vs_puc.py`）。注释与字符串中的内容不计。 |
 | **同名 MOD** | 两个 mod 声明同一个 `mods/<作者>/<名称>` 时，只有加载顺序靠后的那个会运行。 |
 | **翻译包** | 翻译包（与原 mod 同一作者目录、名称为原 mod 名加语言后缀，并包装旧菜单的登记调用，例如 ActionCam简体中文）显示为原 mod 下方的一行小字，带有自己的勾选框，并在加载顺序中保持紧接在原 mod 之后。原 mod 未启用或未安装时，提示翻译不会生效。 |
 | **上一局** | Boot Mod Loader 上次启动游戏时的日志：哪些 mod 已启动、各自用时，以及哪些启动失败或无法编译，并附原因。 |
-| **崩溃** | 游戏留下新的崩溃转储时，左侧显示崩溃时间（转储文件的写入时间）以及当时本程序部署的 mod。 |
 
 以上检查均在游戏外、部署前完成，不在游戏中运行任何内容。列表不会因此等待：检查结果保存在 `lua_scan.json` 中，尚未读取的文件在后台读取，结果稍后显示。
 

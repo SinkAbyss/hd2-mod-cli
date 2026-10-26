@@ -14,5 +14,6 @@ set NAME=the whole program
 if not exist "%OUT%" mkdir "%OUT%"
 copy /y "cli\bin\Release\net48\hd2qd.exe" "%OUT%\hd2qd.exe" >nul || exit /b 1
 copy /y "gui\QuickDeploy\bin\Release\net48\HD2 Mod Quick Deploy.exe" "%OUT%\HD2 Mod Quick Deploy.exe" >nul || exit /b 1
+:copied
 echo.
 echo Built (%NAME%): %OUT%\hd2qd.exe and %OUT%\HD2 Mod Quick Deploy.exe

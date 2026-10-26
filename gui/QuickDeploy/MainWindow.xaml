@@ -19,13 +19,11 @@
               BorderThickness="0,0,0,1" Height="72">
         <Grid>
           <DockPanel LastChildFill="False">
-          <!-- this window's own mark, the one on its icon: a mod going into the game. The
-               hazard tape belongs to HD2 Mod Setting GUI, another window (the user, 2026-10-24) -->
-          <Canvas DockPanel.Dock="Left" Width="32" Height="32" Margin="24,0,12,0" VerticalAlignment="Center">
-            <Path Data="M5,17 V28 H27 V17" Stroke="{StaticResource Ink}" StrokeThickness="3.5"
-                  StrokeStartLineCap="Square" StrokeEndLineCap="Square"/>
-            <Path Data="M12.5,3 H19.5 V13 H25 L16,23 L7,13 H12.5 Z" Fill="{StaticResource Yellow}"/>
-          </Canvas>
+          <!-- this window's own mark, the one on its icon: a drop pod coming down onto a planet
+               (the user's design, gui\design\droppod-icon, 2026-10-26). The hazard tape belongs to HD2 Mod Setting GUI,
+               another window (the user, 2026-10-24) -->
+          <Image DockPanel.Dock="Left" Source="logo.png" Width="44" Height="44" Margin="16,0,10,0" VerticalAlignment="Center"
+                 RenderOptions.BitmapScalingMode="HighQuality"/>
           <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
             <TextBlock x:Name="TitleText" FontSize="22" FontWeight="Bold"/>
             <TextBlock x:Name="SummaryText" Style="{StaticResource MonoText}"/>
@@ -135,8 +133,12 @@
               <Border DockPanel.Dock="Left" Width="1" Background="{StaticResource Grid}" Margin="0,7,0,7"/>
               <Button x:Name="TagFilterBtn" DockPanel.Dock="Left" Style="{StaticResource InField}" Click="TagFilter_Click"/>
               <Border DockPanel.Dock="Left" Width="1" Background="{StaticResource Grid}" Margin="0,7,0,7"/>
-              <Button x:Name="SearchClear" DockPanel.Dock="Right" Content="✕" Width="32" Style="{StaticResource InField}"
-                      Padding="0" Visibility="Collapsed" Click="SearchClear_Click"/>
+              <!-- a drawn cross, centred: the text "✕" was cut by the button's padding (the user, 2026-10-26) -->
+              <Button x:Name="SearchClear" DockPanel.Dock="Right" Width="36" Style="{StaticResource InField}"
+                      Padding="0" Visibility="Collapsed" Click="SearchClear_Click">
+                <Path Data="M0,0 L10,10 M10,0 L0,10" Stroke="{StaticResource Ink}" StrokeThickness="1.5"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Button>
               <Grid>
                 <TextBox x:Name="SearchBox" Background="Transparent" Foreground="{StaticResource Ink}" CaretBrush="{StaticResource Ink}"
                          BorderThickness="0" Padding="10,8,8,8" FontSize="14" VerticalContentAlignment="Center" TextChanged="Search_Changed"/>

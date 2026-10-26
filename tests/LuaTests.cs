@@ -80,6 +80,23 @@ namespace Hd2Mod.Tests
             Assert.Null(Kind("x = 1"));
         }
 
+        /// <summary>Chef Shared Loader hands its interface to a mod as the script's argument; under any
+        /// other loader the first chef.x fails (NarrowHUD 1.0.5 under Boot Mod Loader, 2026-10-26).</summary>
+        [Fact]
+        public void ChefsOwnInterfaceUsedWithoutATestNeedsChef()
+        {
+            bool Api(string src) => LuaMods.UsesChefApi(LuaSyntax.Tokens(Encoding.UTF8.GetBytes(src)));
+            Assert.True(Api("local chef = ...\nchef.log('x')"));
+            Assert.True(Api("local chef = ...\nif type(chef.own_log) == 'function' then chef.own_log('n') end"));   // NarrowHUD's line 647
+            Assert.True(Api("local chef = ...\nlocal id = chef.call and chef.call('x')"));                            // a field tested, not chef
+            Assert.False(Api("local chef = ...\nif chef then chef.log('x') end"));                                     // a fallback
+            Assert.False(Api("local chef = ...\nif type(chef) == 'table' then chef.log('x') end"));
+            Assert.False(Api("local chef = ...\nlocal log = chef and chef.log or print"));
+            Assert.False(Api("local chef = require('chef')\nchef.log('x')"));                                         // not the argument
+            Assert.False(Api("local t = ...\nt.chef.log('x')"));                                                        // somebody's field
+            Assert.False(Api("-- local chef = ...\nx = 'chef.log'"));                                                  // comments and strings
+        }
+
         [Fact]
         public void TheParsersLimitsAreLua51s()
         {
@@ -155,32 +172,226 @@ namespace Hd2Mod.Tests
             Assert.Equal("bml", running);
             Assert.Empty(issues);
 
-            // Chef after it: its stub's boot wins; two loaders, one boot that does not run
+            // Chef added after it, no choice made: the last loader enabled is in effect, and only it
+            // goes to the game, last (the user, 2026-10-26: one loader, chosen in a panel)
             Cli("add", Chef());
             var now = Now();
             Assert.Equal("Chef Shared Loader", now.Owner.Mod.Name);
             Assert.Equal("chef", now.Running);
-            Assert.Equal(new[] { "boot_conflict", "two_loaders" }, now.Issues.Select(i => i.Kind).ToArray());
-            Assert.Equal(new[] { "Chef Shared Loader", "Boot Mod Loader" }, now.Issues[0].Mods.Select(m => m.Name).ToArray());
+            Assert.Empty(now.Issues);
+            Assert.DoesNotContain(Deploy.Plan(Library.Load()), w => w.Mod == "Boot Mod Loader");
 
-            // the player puts Boot Mod Loader last: its boot wins
-            Cli("move", "Boot Mod Loader", "--bottom");
+            // Boot Mod Loader chosen: it goes last wherever it stands, and Chef not at all
+            Cli("loader", "Boot Mod Loader");
+            Cli("move", "Boot Mod Loader", "--top");
             now = Now();
             Assert.Equal("bml", now.Running);
-            Assert.Equal("Boot Mod Loader", now.Issues.First(i => i.Kind == "boot_conflict").Mods[0].Name);
+            var plan = Deploy.Plan(Library.Load());
+            Assert.Equal("Boot Mod Loader", plan.Last().Mod);
+            Assert.DoesNotContain(plan, w => w.Mod == "Chef Shared Loader");
+            Assert.Empty(now.Issues);
+            // the choice is for every profile: its own switch does not matter
+            Cli("disable", "Boot Mod Loader");
+            Assert.Equal("bml", Now().Running);
 
             // a mod only Chef Shared Loader runs, under Boot Mod Loader
             Cli("add", Addon("Radar", "mods/chef/radar", "-- HD2-Requires: chef-shared-loader\n", A2));
             Assert.Contains(Now().Issues, i => i.Kind == "needs_chef" && i.Mods.Single().Name == "Radar");
-            Cli("disable", "Chef Shared Loader");
-            Assert.DoesNotContain(Now().Issues, i => i.Kind == "boot_conflict" || i.Kind == "two_loaders");
 
-            // a boot nobody knows: named after its mod, and no loader runs
+            // none: no loader goes to the game
+            Cli("loader", "none");
+            Assert.Null(Now().Running);
+            Assert.DoesNotContain(Deploy.Plan(Library.Load()), w => w.Mod == "Boot Mod Loader" || w.Mod == "Chef Shared Loader");
+            Assert.Contains(Now().Issues, i => i.Kind == "no_loader");
+            Assert.Throws<ModError>(() => Loaders.Choose(Library.Load(), "Radar"));      // no loader
+
+            // a boot nobody knows: the loader's goes last and wins; that one does not run
+            Cli("loader", "Boot Mod Loader");
             Cli("add", Mod("Installer", new Dictionary<string, byte[]> { [A + ".patch_0"] = LuaArchive((LuaMods.BootId, "-- swaps files\nlocal y = 2\n")) }));
             now = Now();
-            Assert.Equal("Installer", now.Owner.Mod.Name);
-            Assert.Equal("other", now.Running);
-            Assert.Contains(now.Issues, i => i.Kind == "no_loader");
+            Assert.Equal("bml", now.Running);
+            Assert.Contains(now.Issues, i => i.Kind == "boot_conflict" && i.Mods[0].Name == "Boot Mod Loader" && i.Mods[1].Name == "Installer");
+        }
+
+        /// <summary>The user (2026-10-26, "先试试协调方案"): Boot Mod Loader in effect, Chef Shared Loader
+        /// helping with the mods made for it only: Chef goes to the game too, just before the loader,
+        /// and is no second loader and no boot in the way; only while such a mod is on, and only with a
+        /// Boot Mod Loader that hands off (0.13.0 or later).</summary>
+        [Fact]
+        public void ChefHelpsBootModLoaderWithTheModsMadeForIt()
+        {
+            Cli("add", Bml("0.13.0"));
+            Cli("add", Chef());
+            Cli("add", Addon("Lamp", "mods/me/lamp"));
+            Cli("add", Addon("Narrow", "mods/x/narrow", "local chef = ...\nchef.log('x')\n", A2));
+            Cli("loader", "Boot Mod Loader");
+            var now = Now();
+            Assert.Equal("bml", now.Running);
+            Assert.Empty(now.Issues);                                         // no second loader, no boot conflict, nothing unstarted
+            var lib = Library.Load();
+            Assert.Equal("Chef Shared Loader", Loaders.Helper(lib).Name);
+            var mods = Deploy.Plan(lib).Select(w => w.Mod).Distinct().ToList();
+            Assert.Equal(new[] { "Lamp", "Narrow", "Chef Shared Loader", "Boot Mod Loader" }, mods.ToArray());
+            Assert.Contains("\"loader_helper\": \"" + lib.Mods.Single(m => m.Name == "Chef Shared Loader").Id + "\"", Cli("state"));
+
+            // no mod made for Chef on: Chef stays out
+            Cli("disable", "Narrow");
+            Assert.Null(Loaders.Helper(Library.Load()));
+            Assert.DoesNotContain(Deploy.Plan(Library.Load()), w => w.Mod == "Chef Shared Loader");
+
+            // a Boot Mod Loader that does not hand off: no helper, and the mod is said not to start
+            Cli("enable", "Narrow");
+            Cli("remove", "Boot Mod Loader");
+            Cli("add", Bml("0.12.1"));
+            Cli("loader", "Boot Mod Loader");
+            Assert.Null(Loaders.Helper(Library.Load()));
+            Assert.Contains(Now().Issues, i => i.Kind == "needs_chef" && i.Mods.Single().Name == "Narrow");
+        }
+
+        /// <summary>Chef Shared Loader 1.2.1 reads no Lua resource whose row is over 4 MB (Super Holo
+        /// HUD's 8.8 MB script did not start under it, 2026-10-26): said when Chef starts it, not
+        /// under Boot Mod Loader; a script just under the limit is fine.</summary>
+        [Fact]
+        public void AScriptOver4MbDoesNotStartUnderChef()
+        {
+            string Big(int n) => "local data = '" + new string('x', n) + "'\n";
+            Cli("add", Bml("0.13.0"));
+            Cli("add", Chef());
+            Cli("add", Addon("Holo", "mods/me/holo", Big(4 * 1024 * 1024)));                       // over: 4 MiB + header
+            Cli("add", Addon("Small", "mods/me/small", Big(4 * 1024 * 1024 - 200), A2));            // the row just under 4 MiB
+            Cli("loader", "Boot Mod Loader");
+            Assert.DoesNotContain(Now().Issues, i => i.Kind == "too_big_for_chef");             // Boot Mod Loader has no cap
+            Cli("loader", "Chef Shared Loader");
+            var big = Now().Issues.Where(i => i.Kind == "too_big_for_chef").ToList();
+            Assert.Equal(new[] { "Holo" }, big.Select(i => i.Mods.Single().Name).ToArray());
+            Assert.True(long.Parse(big[0].Detail) > LuaMods.ChefMaxLua);
+            Assert.Contains("Holo will not start: Chef Shared Loader reads no script over 4 MB at present", Cli("lua"));
+            Assert.Contains("\"biggest\": " + (4 * 1024 * 1024 + "local data = ''\n".Length + "-- HD2-Addon: mods/me/holo\n".Length + "local x = 1\n".Length + 8), Cli("state"));
+        }
+
+        /// <summary>The user (2026-10-26, "好不统一"): under every choice of loader, the one in effect too,
+        /// the same question is answered: which mods would not start, and why. Chef Shared Loader runs
+        /// the boots deployed before it, so a boot that starts only its mod is no conflict under it.</summary>
+        [Fact]
+        public void EveryChoiceOfLoaderSaysWhatWouldNotStart()
+        {
+            Cli("add", Bml("0.13.0"));
+            Cli("add", Chef());
+            Cli("add", Addon("Lamp", "mods/me/lamp"));
+            Cli("add", Addon("Narrow", "mods/x/narrow", "local chef = ...\nchef.log('x')\n", A2));
+            Cli("add", Addon("Holo", "mods/me/holo", "local data = '" + new string('x', 4 * 1024 * 1024) + "'\n", A3));
+            Cli("add", Tracker());
+            Cli("loader", "Boot Mod Loader");
+            var lib = Library.Load();
+            var all = LuaMods.Of(lib);
+            LuaMods.Check(lib, all);
+            var outs = LuaMods.Outcomes(lib, all).ToDictionary(x => x.Choice?.Name ?? "none", x => x.Outcomes);
+            string Say(string choice) => string.Join("; ", outs[choice].Select(o => o.Why + ": " + string.Join(", ", o.Mods.Select(m => m.Name))));
+            Assert.Equal("", Say("Boot Mod Loader"));                                   // Chef helps, the tracker is a guest
+            Assert.Equal("too_big_for_chef: Holo", Say("Chef Shared Loader"));           // the tracker's boot: Chef runs it
+            Assert.Equal("no_loader: Lamp, Narrow, Holo", Say("none"));
+            // asking the other choices leaves the flags of the one in effect alone
+            Assert.True(all.Single(x => x.Mod.Name == "Tracker").Guest);
+            Assert.False(all.Single(x => x.Mod.Name == "Tracker").ChefRuns);
+            Assert.Contains("\"outcomes\"", Cli("state"));
+            Assert.Contains("Chef Shared Loader: will not start (script over Chef Shared Loader's 4 MB limit): Holo", Cli("lua"));
+
+            // Chef in effect: the tracker's boot is run by it, no conflict
+            Cli("loader", "Chef Shared Loader");
+            var now = Now();
+            Assert.Equal("chef", now.Running);
+            Assert.DoesNotContain(now.Issues, i => i.Kind == "boot_conflict");
+            lib = Library.Load();
+            all = LuaMods.Of(lib);
+            LuaMods.Check(lib, all);
+            Assert.True(all.Single(x => x.Mod.Name == "Tracker").ChefRuns);
+            Assert.False(all.Single(x => x.Mod.Name == "Tracker").Guest);
+        }
+
+        // a mod that is no loader, with a boot that starts only itself (as Objective Tracker 0.6.7)
+        const string TrackerBoot = "function init() end\nfunction update(dt) end\nlocal OT = 'starts itself'\n";
+        static bool Guest(string name)
+        {
+            var lib = Library.Load();
+            var all = LuaMods.Of(lib);
+            LuaMods.Check(lib, all);
+            return all.Single(x => x.Mod.Name == name).Guest;
+        }
+
+        string Tracker(string boot = TrackerBoot) => Mod("Tracker", new Dictionary<string, byte[]>
+        {
+            [A + ".patch_0"] = LuaArchive((LuaMods.BootId, boot), (A2, "local OT_ADDON='mods/x/tracker'\nlocal y = 1\n")),
+        });
+
+        /// <summary>The user (2026-10-26): players must never mind which boot comes last, and a mod
+        /// that starts only itself is no loader. With Boot Mod Loader 0.12.0 or later winning, its
+        /// boot goes to the game off the slot, as a guest the loader runs; the library is not
+        /// touched. With an older loader, nothing is changed (nobody would start it).</summary>
+        [Fact]
+        public void ABootThatStartsOnlyItsModIsRunByTheLoader()
+        {
+            Assert.Equal(LuaMods.BootId, GuestBoots.Murmur64(Bytes("boot")));
+            Assert.Equal(Deploy.LuaType, GuestBoots.Murmur64(Bytes("lua")));
+            Assert.Equal(0xC27789387E64579Aul, GuestBoots.Murmur64(Bytes("mods/chef_shared_loader/core_1")));
+
+            Cli("add", Bml("0.11.0"));
+            var trackerDir = Tracker();
+            Cli("add", trackerDir);
+            var original = File.ReadAllBytes(Path.Combine(trackerDir, A + ".patch_0"));
+            // an older loader runs no guests: the loader's boot wins (it goes last), the tracker's does not run
+            var now = Now();
+            Assert.Equal("bml", now.Running);
+            Assert.Contains(now.Issues, i => i.Kind == "boot_conflict");
+            Assert.All(Deploy.Plan(Library.Load()), w => Assert.DoesNotContain("guest_boots", w.Src));
+
+            Cli("remove", "Boot Mod Loader");
+            Cli("add", Bml("0.12.0"));
+            Cli("move", "Boot Mod Loader", "--top");          // where it stands does not matter
+            now = Now();
+            Assert.Equal("bml", now.Running);
+            Assert.Equal("Boot Mod Loader", now.Owner.Mod.Name);
+            Assert.DoesNotContain(now.Issues, i => i.Kind == "boot_conflict" || i.Kind == "no_loader");
+            Assert.True(Guest("Tracker"));
+            Assert.Contains("\"guest\": true", Cli("state"));
+
+            var w0 = Deploy.Plan(Library.Load()).Single(w => w.Mod == "Tracker" && Deploy.Patch.IsMatch(w.Name));
+            Assert.Equal(A + ".patch_0", w0.Name);                // the loader is numbered last
+            Assert.Contains("guest_boots", w0.Src);
+            var d = File.ReadAllBytes(w0.Src);
+            Assert.Equal(original, File.ReadAllBytes(Path.Combine(trackerDir, A + ".patch_0")));     // the library is not touched
+            // every row but the boot as it was; the boot renamed, its script at the end with the guest line
+            var before = Deploy.Rows(Path.Combine(trackerDir, A + ".patch_0"));
+            var after = Deploy.Rows(w0.Src);
+            Assert.Equal(before.Count, after.Count);
+            Assert.Equal(before[1].Id, after[1].Id);
+            Assert.Equal(before[1].Off, after[1].Off);
+            Assert.Equal(before[1].Size, after[1].Size);
+            Assert.Equal(GuestBoots.IdOf("Tracker"), after[0].Id);
+            Assert.Equal(Deploy.LuaType, after[0].Type);
+            Assert.Equal(0ul, after[0].Off % 16);
+            Assert.True(after.All(r => r.Off + r.Size <= (ulong)d.Length));
+            Assert.Equal((ulong)d.Length, after[0].Off + after[0].Size);
+            Assert.Equal(original, d.Take(original.Length).Select((b, i) => i >= 0x48 + 32 && i < 0x48 + 32 + 80 ? original[i] : b).ToArray());
+            var text = Encoding.UTF8.GetString(d, (int)after[0].Off + 8, (int)after[0].Size - 8);
+            Assert.Equal("-- HD2-Guest-Boot: Tracker\n" + TrackerBoot, text);
+            Assert.Equal((uint)(after[0].Size - 8), BitConverter.ToUInt32(d, (int)after[0].Off));
+            Assert.Equal(2u, BitConverter.ToUInt32(d, (int)after[0].Off + 4));
+            Assert.DoesNotContain(after, r => r.Id == LuaMods.BootId);
+
+            // deployed: the game has the derived copy; a second deploy keeps it
+            Cli("deploy");
+            Assert.Equal(d, File.ReadAllBytes(Path.Combine(Data, A + ".patch_0")));
+            Assert.Contains("wrote 0", Cli("deploy"));
+            // the tracker first: still a guest (the loader's boot wins either way)
+            Cli("move", "Tracker", "--top");
+            Assert.True(Guest("Tracker"));
+            Assert.Equal("bml", Now().Running);
+
+            // a boot in bytecode cannot be a guest: it stays, and the loader's boot wins over it
+            Cli("remove", "Tracker");
+            Cli("add", Mod("Compiled", new Dictionary<string, byte[]> { [A + ".patch_0"] = LuaArchive((LuaMods.BootId, "\u001bLuaQ...")) }));
+            Assert.All(Deploy.Plan(Library.Load()), w => Assert.DoesNotContain("guest_boots", w.Src));
+            Assert.Contains(Now().Issues, i => i.Kind == "boot_conflict");
         }
 
         [Fact]
@@ -255,6 +466,78 @@ namespace Hd2Mod.Tests
                 Assert.Equal(new[] { "Lamp", "Radio" }, LuaMods.DeployedAt(DateTime.Now.AddMinutes(1)).Value.Mods.ToArray());
             }
             finally { LuaMods.GameFolderOverride = null; }
+        }
+
+        /// <summary>A minidump with an exception at address and one module (base, size, name), as
+        /// the game writes them: the header, the stream directory, the exception, the modules.</summary>
+        static byte[] Minidump(ulong address, ulong moduleBase, uint moduleSize, string module)
+        {
+            var b = new byte[400];
+            BitConverter.GetBytes(0x504D444Du).CopyTo(b, 0);
+            BitConverter.GetBytes(2u).CopyTo(b, 8);
+            BitConverter.GetBytes(32u).CopyTo(b, 12);
+            BitConverter.GetBytes(6u).CopyTo(b, 32); BitConverter.GetBytes(168u).CopyTo(b, 36); BitConverter.GetBytes(56u).CopyTo(b, 40);
+            BitConverter.GetBytes(4u).CopyTo(b, 44); BitConverter.GetBytes(112u).CopyTo(b, 48); BitConverter.GetBytes(224u).CopyTo(b, 52);
+            BitConverter.GetBytes(0xC0000005u).CopyTo(b, 56 + 8);
+            BitConverter.GetBytes(address).CopyTo(b, 56 + 24);
+            BitConverter.GetBytes(1u).CopyTo(b, 224);
+            BitConverter.GetBytes(moduleBase).CopyTo(b, 228);
+            BitConverter.GetBytes(moduleSize).CopyTo(b, 236);
+            BitConverter.GetBytes(336u).CopyTo(b, 228 + 20);
+            var name = Encoding.Unicode.GetBytes(module);
+            BitConverter.GetBytes((uint)name.Length).CopyTo(b, 336);
+            name.CopyTo(b, 340);
+            return b;
+        }
+
+        /// <summary>The user (2026-10-26): the crash card listed the mods and said nothing, and the
+        /// game crashes at one place all the time. A crash at a place seen 3 times in the last 50
+        /// shows no card; a new place is named with what the deploy before it added.</summary>
+        [Fact]
+        public void ACrashIsShownOnlyAtAPlaceTheGameDoesNotCrashAtOften()
+        {
+            var folder = Path.Combine(Root, "hd2");
+            Directory.CreateDirectory(Path.Combine(folder, "dumps"));
+            LuaMods.GameFolderOverride = folder;
+            try
+            {
+                const ulong exe = 0x7FF600000000;
+                void Dump(int minute, ulong offset, string module = @"C:\Games\helldivers2.exe")
+                {
+                    var p = Path.Combine(folder, "dumps", "dump-2026-10-26-09." + minute.ToString("00") + ".00-x-PC-1.dmp");
+                    File.WriteAllBytes(p, Minidump(exe + offset, exe, 0x2000000, module));
+                    File.SetLastWriteTime(p, new DateTime(2026, 10, 26, 10, minute, 0));
+                }
+                Dump(1, 0x664D86);
+                Dump(2, 0x664D86);
+                Assert.Equal("helldivers2.exe+0x664D86", LuaMods.SiteOf(Path.Combine(folder, "dumps", LuaMods.Crashes(1).Single().File)));
+                Assert.Null(LuaMods.SiteOf(Path.Combine(folder, "nothing.dmp")));             // unreadable: no place
+                // twice is not yet often
+                var (site, times, of) = LuaMods.SiteCount(LuaMods.Crashes(1).Single().File);
+                Assert.Equal(("helldivers2.exe+0x664D86", 2, 2), (site, times, of));
+                Assert.Contains("\"common\": false", Cli("state"));
+                Dump(3, 0x664D86);
+                Assert.Equal(3, LuaMods.SiteCount(LuaMods.Crashes(1).Single().File).Times);
+                Assert.Contains("\"common\": true", Cli("state"));
+                // a new place: named, once
+                Dump(4, 0x564F8C);
+                Assert.Equal(("helldivers2.exe+0x564F8C", 1, 4), LuaMods.SiteCount(LuaMods.Crashes(1).Single().File));
+                Assert.Contains("\"common\": false", Cli("state"));
+                Assert.Contains("at helldivers2.exe+0x564F8C, 1 of the last 4 crashes there", Cli("lua"));
+            }
+            finally { LuaMods.GameFolderOverride = null; }
+        }
+
+        /// <summary>What the deploy before a crash put in the game that the one before it had not.</summary>
+        [Fact]
+        public void TheDeployBeforeACrashSaysWhatItAdded()
+        {
+            Assert.Null(LuaMods.AddedAt(DateTime.Now.AddMinutes(1)));                 // nothing recorded
+            LuaMods.Record(new[] { "Lamp v1", "Radio" });
+            Assert.Null(LuaMods.AddedAt(DateTime.Now.AddMinutes(1)));                 // one deploy: nothing to compare
+            System.Threading.Thread.Sleep(1100);
+            LuaMods.Record(new[] { "Lamp v2", "Radio", "Tracker" });
+            Assert.Equal(new[] { "Lamp v2", "Tracker" }, LuaMods.AddedAt(DateTime.Now.AddMinutes(1)).ToArray());
         }
 
         /// <summary>The window's list never waits for the scripts (the user, 2026-10-26: the start

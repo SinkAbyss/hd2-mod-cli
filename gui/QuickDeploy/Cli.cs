@@ -48,6 +48,13 @@ namespace QuickDeploy
         public string NeedsWhy;
         /// <summary>The mod it translates (its id when installed) and that mod's script name.</summary>
         public string PackOf, PackOfName;
+        /// <summary>Its boot only starts itself: a deploy takes it off the start-up slot and Boot
+        /// Mod Loader runs it as a guest.</summary>
+        public bool Guest;
+        /// <summary>Its boot only starts itself, and Chef Shared Loader, in effect, runs it too.</summary>
+        public bool ChefRuns;
+        /// <summary>Its biggest script that would start, in bytes (Chef Shared Loader reads none over 4 MB).</summary>
+        public long Biggest;
         /// <summary>Boot Mod Loader's log of the last session: loaded, failed or no_compile.</summary>
         public string LastState, LastWhy;
         public int LastMs;
@@ -59,12 +66,21 @@ namespace QuickDeploy
         public string BootOwner, BootKind, Running;
         public List<string> BootMods = new List<string>();
         public List<(string Kind, List<string> Mods, string Detail)> Issues = new List<(string, List<string>, string)>();
+        /// <summary>Under each choice of loader (its id, or "none"): the mods that would not start, and why.</summary>
+        public Dictionary<string, List<(string Why, List<string> Mods, string Over)>> Outcomes = new Dictionary<string, List<(string, List<string>, string)>>();
         public string SessionLoader;
         public long SessionWhen;
         public int Started = -1, Total = -1;
         public string CrashFile;
         public long CrashWhen, CrashDeployedWhen;
         public List<string> CrashMods = new List<string>();
+        /// <summary>Where it crashed (helldivers2.exe+0x664D86), how often of the newest dumps,
+        /// whether the game crashes there all the time, what the deploy before it added (null:
+        /// not recorded).</summary>
+        public string CrashSite;
+        public int CrashTimes, CrashRecent;
+        public bool CrashCommon;
+        public List<string> CrashAdded;
     }
 
     class ModRow
@@ -74,6 +90,8 @@ namespace QuickDeploy
         /// <summary>The name the mod came with, when the player gave it another one.</summary>
         public string RealName;
         public bool Enabled, Exists, HasManifest, SameDrive, Lua, Loader;
+        /// <summary>"bml", "chef", "bsl" for a loader, else null.</summary>
+        public string LoaderKind;
         /// <summary>Its Lua scripts, when it has any.</summary>
         public LuaInfo Lu;
         /// <summary>In the profile in use (always, with profiles off).</summary>
@@ -168,6 +186,10 @@ namespace QuickDeploy
         public List<ModRow> Mods = new List<ModRow>();
         /// <summary>Profiles: whether they are on, the one in use, all of them.</summary>
         public bool ProfilesOn;
+        /// <summary>The loader in effect (a mod's id), chosen for every profile; null: none.</summary>
+        public string LoaderChoice;
+        /// <summary>Chef Shared Loader helping the loader in effect with the mods made for it; null: none.</summary>
+        public string LoaderHelper;
         public string Profile;
         public List<string> Profiles = new List<string>();
         /// <summary>Every label the library knows, whether or not a mod carries it.</summary>
@@ -251,7 +273,7 @@ namespace QuickDeploy
             var d = (Dictionary<string, object>)Json.Parse(json);
             var s = new State { GameDir = Str(d, "game_dir"), Home = Str(d, "home"), Version = Str(d, "version"), ModsDir = Str(d, "mods_dir"),
                                 SavedBytes = Long(d, "saved_bytes"), Deploys = Int(d, "deploys"),
-                                ProfilesOn = Bool(d, "profiles_on"), Profile = Str(d, "profile") };
+                                ProfilesOn = Bool(d, "profiles_on"), Profile = Str(d, "profile"), LoaderChoice = Str(d, "loader_choice"), LoaderHelper = Str(d, "loader_helper") };
             if (d.TryGetValue("profiles", out var pl) && pl is List<object> names) s.Profiles = names.OfType<string>().ToList();
             if (d.TryGetValue("summary", out var sm) && sm is Dictionary<string, object> sum)
             {
@@ -294,6 +316,10 @@ namespace QuickDeploy
                 foreach (var id in List(lc, "boot_mods").OfType<string>()) lua.BootMods.Add(id);
                 foreach (var i in List(lc, "issues").OfType<Dictionary<string, object>>())
                     lua.Issues.Add((Str(i, "kind"), List(i, "mods").OfType<string>().ToList(), Str(i, "detail")));
+                if (lc.TryGetValue("outcomes", out var ov) && ov is Dictionary<string, object> outs)
+                    foreach (var kv in outs)
+                        lua.Outcomes[kv.Key] = (kv.Value as List<object> ?? new List<object>()).OfType<Dictionary<string, object>>()
+                            .Select(o => (Str(o, "why"), List(o, "mods").OfType<string>().ToList(), Str(o, "over"))).ToList();
                 if (lc.TryGetValue("session", out var sv) && sv is Dictionary<string, object> se)
                 {
                     lua.SessionLoader = Str(se, "loader");
@@ -307,6 +333,11 @@ namespace QuickDeploy
                     lua.CrashWhen = Long(cr, "when");
                     lua.CrashDeployedWhen = Long(cr, "deployed_when");
                     lua.CrashMods = List(cr, "mods").OfType<string>().ToList();
+                    lua.CrashSite = Str(cr, "site");
+                    lua.CrashTimes = Int(cr, "site_times");
+                    lua.CrashRecent = Int(cr, "recent");
+                    lua.CrashCommon = Bool(cr, "common");
+                    lua.CrashAdded = cr.TryGetValue("added", out var ad) && ad is List<object> al ? al.OfType<string>().ToList() : null;
                 }
                 s.Lua = lua;
             }
@@ -318,7 +349,7 @@ namespace QuickDeploy
                     Source = Str(m, "source"), Description = Str(m, "description"), Error = Str(m, "error"),
                     Enabled = Bool(m, "enabled"), Exists = Bool(m, "exists"), HasManifest = Bool(m, "manifest"),
                     InProfile = !m.ContainsKey("in_profile") || Bool(m, "in_profile"),
-                    Icon = Str(m, "icon"), SameDrive = Bool(m, "same_drive"), Lua = Bool(m, "lua"), Loader = Bool(m, "loader"), NexusMod = Long(m, "nexus_mod"), NexusPage = Str(m, "nexus_page"),
+                    Icon = Str(m, "icon"), SameDrive = Bool(m, "same_drive"), Lua = Bool(m, "lua"), Loader = Bool(m, "loader"), LoaderKind = Str(m, "loader_kind"), NexusMod = Long(m, "nexus_mod"), NexusPage = Str(m, "nexus_page"),
                     Channel = Str(m, "channel"), Page = Str(m, "page"), Version = Str(m, "version"),
                     SiteAuthor = Str(m, "site_author"), SiteSummary = Str(m, "site_summary"), SiteVersion = Str(m, "site_version"),
                     ShownVersion = Str(m, "shown_version"), VersionFrom = Str(m, "version_from"), DeployBytes = Long(m, "deploy_bytes"),
@@ -348,6 +379,9 @@ namespace QuickDeploy
                     foreach (var b in List(li, "broken").OfType<Dictionary<string, object>>())
                         lu.Broken.Add((Str(b, "script"), Int(b, "line"), Str(b, "message"), Str(b, "error_kind"), List(b, "jit").OfType<string>().ToList(), Bool(b, "luajit_bytecode")));
                     lu.NeedsWhy = Str(li, "needs_why");
+                    lu.Guest = Bool(li, "guest");
+                    lu.ChefRuns = Bool(li, "chef_runs");
+                    lu.Biggest = Long(li, "biggest");
                     if (li.TryGetValue("last", out var lv) && lv is Dictionary<string, object> last)
                     {
                         lu.LastState = Str(last, "state");

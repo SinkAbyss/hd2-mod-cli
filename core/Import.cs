@@ -13,6 +13,15 @@ namespace Hd2Mod
         public int Mods;
         /// <summary>HD2ModManager's storage folder when it is not in its usual place, else null.</summary>
         public string Dir;
+        /// <summary>The manager's own list file, when the player chose it (not in its usual place), else null.</summary>
+        public string File;
+        /// <summary>Its list was found but could not be read: why (ProblemKind "bad_format" when its
+        /// shape is unknown, "bad_version" for a version this program does not read). Null when read.</summary>
+        public string Problem, ProblemKind;
+
+        /// <summary>A manager whose list was found and could not be read.</summary>
+        public static ImportSource Unreadable(string key, string name, string where, Exception e) =>
+            new ImportSource { Key = key, Name = name, Where = where, Problem = e.Message, ProblemKind = (e as ModError)?.Kind };
         /// <summary>The manager's profiles, when it keeps more than one; else empty.</summary>
         public List<string> ProfileNames = new List<string>();
     }
@@ -38,6 +47,111 @@ namespace Hd2Mod
     /// it (the same folder, the same manifest Guid, or the same name) is left as it is.</summary>
     public static class Importers
     {
+        /// <summary>Which manager keeps its mods in this folder, by the marks each leaves on its mod
+        /// folders (the user, 2026-10-26: a manager's store is imported through that manager's own
+        /// list, never as loose mods). Half of the mod folders in it at least, and two or more:
+        /// "arsenal": names ending in "_AR" and six digits (HD2 Arsenal's copies);
+        /// "echelon": names ending in " (" and twelve hex digits ")", no manifest.json, the files in
+        /// numbered set folders (0, opt\0, ...);
+        /// "hd2mm": a manifest.json with a Guid in each, and at least one that HD2ModManager wrote
+        /// for a mod it imported ("A locally imported mod.").
+        /// Null for any other folder.</summary>
+        public static string StoreOf(string folder)
+        {
+            List<string> subs;
+            try { subs = Directory.EnumerateDirectories(folder).ToList(); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException) { return null; }
+            int all = 0, ar = 0, ec = 0, guid = 0, local = 0;
+            foreach (var sub in subs)
+            {
+                var name = Path.GetFileName(sub);
+                bool manifest = System.IO.File.Exists(Path.Combine(sub, "manifest.json"));
+                bool sets;
+                try
+                {
+                    sets = Directory.EnumerateDirectories(sub).Select(Path.GetFileName).Any(n => SetFolder.IsMatch(n))
+                        || Directory.Exists(Path.Combine(sub, "opt")) && Directory.EnumerateDirectories(Path.Combine(sub, "opt")).Select(Path.GetFileName).Any(n => SetFolder.IsMatch(n));
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { sets = false; }
+                bool patches;
+                try { patches = Deploy.List(sub).Any(f => Deploy.Patch.IsMatch(f)); }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { patches = false; }
+                if (!manifest && !patches && !sets && !ArsenalName.IsMatch(name)) continue;          // no mod folder
+                all++;
+                if (ArsenalName.IsMatch(name)) ar++;
+                if (EchelonName.IsMatch(name) && !manifest && sets) ec++;
+                if (manifest)
+                {
+                    string text = "";
+                    try { text = System.IO.File.ReadAllText(Path.Combine(sub, "manifest.json")); }
+                    catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+                    if (text.IndexOf("\"Guid\"", StringComparison.OrdinalIgnoreCase) >= 0) guid++;
+                    if (text.IndexOf("A locally imported mod.", StringComparison.Ordinal) >= 0) local++;
+                }
+            }
+            bool Most(int n) => n >= 2 && n * 2 >= all;
+            if (Most(ar)) return "arsenal";
+            if (Most(ec)) return "echelon";
+            if (Most(guid) && local > 0) return "hd2mm";
+            return null;
+        }
+
+        static readonly System.Text.RegularExpressions.Regex ArsenalName = new System.Text.RegularExpressions.Regex(@"_AR\d{6}$");
+        static readonly System.Text.RegularExpressions.Regex EchelonName = new System.Text.RegularExpressions.Regex(@" \([0-9a-f]{12}\)$");
+        static readonly System.Text.RegularExpressions.Regex SetFolder = new System.Text.RegularExpressions.Regex(@"^\d+$");
+
+        /// <summary>The name, the list file and its usual folder of each manager StoreOf knows.</summary>
+        public static (string Name, string File, string Usual) ConfigOf(string key)
+        {
+            string Env(string v) => Environment.GetEnvironmentVariable(v) ?? "";
+            switch (key)
+            {
+                case "arsenal": return ("HD2 Arsenal", "hd2a_data.json", Path.Combine(Env("LOCALAPPDATA"), "hd2arsenal"));
+                case "hd2mm": return ("HD2ModManager", "enabled.json", Path.Combine(Env("LOCALAPPDATA"), "Helldivers2ModManager"));
+                case "echelon": return ("Echelon", "library.json", Path.Combine(Env("APPDATA"), "Echelon"));
+            }
+            return (key, null, null);
+        }
+
+        /// <summary>A list file the player chose for a manager's store, read: how many of the mods it
+        /// lists are in the folder (0: it is not that folder's list), and for HD2ModManager its storage
+        /// folder (the one that holds enabled.json and Mods). Its profiles, when it keeps several.</summary>
+        public static ImportSource FromChosenFile(string key, string file, string folder)
+        {
+            var root = Path.GetFullPath(folder).TrimEnd('\\');
+            bool Inside(string p)
+            {
+                var x = Path.GetFullPath(p ?? "").TrimEnd('\\');
+                return string.Equals(x, root, StringComparison.OrdinalIgnoreCase) || x.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
+            }
+            var (name, _, _) = ConfigOf(key);
+            var src = new ImportSource { Key = key, Name = name, Where = root };
+            List<Mod> mods;
+            if (key == "arsenal")
+            {
+                var p = ArsenalProfiles(file);
+                mods = p.All.Mods;
+                src.File = file;
+                var names = p.Profiles.Select(x => x.Name).ToList();
+                if (names.Count > 1) src.ProfileNames = names;
+            }
+            else if (key == "echelon")
+            {
+                mods = ReadEchelon(file).Mods;
+                src.File = file;
+                var names = EchelonProfiles(file)?.Profiles.Select(x => x.Name).ToList() ?? new List<string>();
+                if (names.Count > 1) src.ProfileNames = names;
+            }
+            else
+            {
+                var dir = Path.GetDirectoryName(Path.GetFullPath(file));
+                mods = ReadHd2mm(dir).Mods;
+                src.Dir = dir;
+            }
+            src.Mods = mods.Count(m => Inside(m.Path));
+            return src;
+        }
+
         /// <summary>HD2ModManager's own folder (its Mods\ and enabled.json), when it is there.</summary>
         public static string Hd2mmDir()
         {
@@ -400,13 +514,16 @@ namespace Hd2Mod
                     out_.Add(new ImportSource { Key = "arsenal", Name = "HD2 Arsenal", Where = Store.ArsenalModsDir() ?? Store.ArsenalFile(), Mods = Ops.ImportArsenal().Lib.Mods.Count,
                                                 ProfileNames = names.Count > 1 ? names : new List<string>() });
                 }
-                catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException) { }
+                // found and not read: said, never left out as if it were not there (the user, 2026-10-26)
+                catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException || e is InvalidCastException)
+                { out_.Add(ImportSource.Unreadable("arsenal", "HD2 Arsenal", Store.ArsenalFile(), e)); }
             }
             var mm = Hd2mmDir();
             if (mm != null)
             {
                 try { out_.Add(new ImportSource { Key = "hd2mm", Name = "HD2ModManager", Where = Path.Combine(mm, "Mods"), Mods = ReadHd2mm(mm).Mods.Count }); }
-                catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException) { }
+                catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException || e is InvalidCastException)
+                { out_.Add(ImportSource.Unreadable("hd2mm", "HD2ModManager", Path.Combine(mm, "enabled.json"), e)); }
             }
             var ec = EchelonFile();
             if (ec != null)
@@ -419,9 +536,10 @@ namespace Hd2Mod
                     out_.Add(new ImportSource { Key = "echelon", Name = "Echelon", Where = where, Mods = theirs.Mods.Count,
                                                 ProfileNames = names.Count > 1 ? names : new List<string>() });
                 }
-                catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException) { }
+                catch (Exception e) when (e is ModError || e is IOException || e is FormatException || e is UnauthorizedAccessException || e is InvalidCastException)
+                { out_.Add(ImportSource.Unreadable("echelon", "Echelon", ec, e)); }
             }
-            return out_.Where(x => x.Mods > 0).ToList();
+            return out_.Where(x => x.Mods > 0 || x.Problem != null).ToList();
         }
 
         /// <summary>HD2ModManager's list: its Mods\ folders in its enabled.json's order (those it does

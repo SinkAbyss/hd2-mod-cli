@@ -142,6 +142,7 @@ namespace Hd2Mod
             // half known is said
             if (missing > 0) return new Dictionary<string, object> { ["pending"] = true };
             var (owner, boots, running, issues) = LuaMods.Check(lib, all);
+            var outcomes = LuaMods.Outcomes(lib, all);
             var session = LuaMods.LastSession();
             var byId = all.ToDictionary(x => x.Mod.Id);
             foreach (var entry in mods.OfType<Dictionary<string, object>>())
@@ -159,7 +160,9 @@ namespace Hd2Mod
                         ["line"] = (long)(b.Error?.Line ?? 0), ["message"] = b.Error?.Message, ["error_kind"] = b.ErrorKind,
                         ["jit"] = b.Jit.Cast<object>().ToList(), ["luajit_bytecode"] = b.LuaJitBytecode,
                     }).ToList(),
-                    ["pack_of"] = ml.PackOf?.Id, ["pack_of_name"] = ml.PackOfName,
+                    ["pack_of"] = ml.PackOf?.Id, ["pack_of_name"] = ml.PackOfName, ["guest"] = ml.Guest, ["helper"] = ml.Helper, ["chef_runs"] = ml.ChefRuns,
+                    // its biggest script that would start (Chef Shared Loader reads none over 4 MB)
+                    ["biggest"] = ml.Scripts.Where(s => s.Header == "Addon" || s.Header == "Boot").Select(s => s.Size).DefaultIfEmpty(0).Max(),
                     ["last"] = last == null ? null : new Dictionary<string, object> { ["state"] = last.State, ["ms"] = (long)last.Ms, ["why"] = last.Why },
                 };
             }
@@ -168,11 +171,17 @@ namespace Hd2Mod
             if (newest.File != null)
             {
                 var then = LuaMods.DeployedAt(newest.When);
+                var (site, times, of) = LuaMods.SiteCount(newest.File);
+                var added = LuaMods.AddedAt(newest.When);
                 crash = new Dictionary<string, object>
                 {
                     ["file"] = newest.File, ["when"] = Unix(newest.When),
                     ["deployed_when"] = then == null ? (object)null : Unix(then.Value.When),
                     ["mods"] = (then?.Mods ?? new List<string>()).Cast<object>().ToList(),
+                    // where it happened, and whether the game crashes there all the time
+                    ["site"] = site, ["site_times"] = (long)times, ["recent"] = (long)of,
+                    ["common"] = site != null && times >= LuaMods.Common,
+                    ["added"] = added?.Cast<object>().ToList(),
                 };
             }
             return new Dictionary<string, object>
@@ -183,6 +192,11 @@ namespace Hd2Mod
                 {
                     ["kind"] = i.Kind, ["mods"] = i.Mods.Select(m => (object)m.Id).ToList(), ["detail"] = i.Detail,
                 }).ToList(),
+                // under each choice of loader ("none": no loader), the mods that would not start
+                ["outcomes"] = outcomes.ToDictionary(c => c.Choice?.Id ?? Loaders.None, c => (object)c.Outcomes.Select(o => (object)new Dictionary<string, object>
+                {
+                    ["why"] = o.Why, ["mods"] = o.Mods.Select(m => (object)m.Id).ToList(), ["over"] = o.Over?.Id,
+                }).ToList()),
                 ["session"] = session == null ? null : new Dictionary<string, object>
                 {
                     ["loader"] = session.Loader, ["when"] = session.When == default(DateTime) ? 0L : Unix(session.When),
@@ -359,6 +373,7 @@ namespace Hd2Mod
                 own = own ?? new List<Dictionary<string, object>>();
                 errors.TryGetValue(m.Name, out var error);
                 var scripts = exists ? HasLua(new DirectoryInfo(m.Path)) : (Lua: false, Loader: false);
+                var loaderKind = exists ? Loaders.KindOf(m) : null;
                 mods.Add(new Dictionary<string, object>
                 {
                     ["index"] = (long)index, ["id"] = m.Id, ["name"] = m.Name, ["real_name"] = m.RealName, ["enabled"] = m.Enabled, ["path"] = m.Path,
@@ -369,7 +384,7 @@ namespace Hd2Mod
                     ["same_drive"] = data != null && exists && Deploy.SameDrive(m.Path, data),
                     ["files"] = own.Cast<object>().ToList(), ["deploy_bytes"] = own.Sum(f => (long)f["bytes"]),
                     ["library_bytes"] = exists ? LibraryBytes(new DirectoryInfo(m.Path)) : 0L,
-                    ["lua"] = scripts.Lua, ["loader"] = scripts.Loader,
+                    ["lua"] = scripts.Lua, ["loader"] = loaderKind != null, ["loader_kind"] = loaderKind,
                     ["nexus_mod"] = m.Nexus?.Mod ?? 0L, ["nexus_page"] = m.Nexus != null ? Nexus.Page(m.Nexus) : null,
                     ["channel"] = Origins.Of(m).Channel, ["page"] = Origins.Of(m).Page, ["version"] = m.Nexus?.Version ?? m.GitHub?.Tag,
                     ["shown_version"] = Origins.VersionOf(m).Version, ["version_from"] = Origins.VersionOf(m).From,
@@ -391,6 +406,10 @@ namespace Hd2Mod
                 ["lua_check"] = luaCheck,
                 // profiles: whether they are on, the one in use, all of them (Profiles)
                 ["profiles_on"] = lib.ProfilesOn, ["profile"] = lib.ProfilesOn ? lib.Active : null,
+                // the loader in effect, chosen for every profile alike (Loaders); null: none
+                ["loader_choice"] = Loaders.Chosen(lib)?.Id,
+                // Chef Shared Loader helping it with the mods made for Chef only; null: not
+                ["loader_helper"] = Loaders.Helper(lib)?.Id,
                 ["profiles"] = lib.Profiles.Select(p => (object)p.Name).ToList(),
                 ["deploying"] = Deploying(),
                 ["check"] = CheckBlock(lib, game, d),

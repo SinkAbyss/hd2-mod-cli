@@ -107,7 +107,7 @@ namespace QuickDeploy
             col.Children.Add(new Border { Height = 3, Background = B("Yellow") });
             body = new StackPanel { Margin = new Thickness(24, 20, 24, 20) };
             col.Children.Add(body);
-            body.Children.Add(new TextBlock { Text = text, Foreground = B("Ink"), FontSize = 15, LineHeight = 22, TextWrapping = TextWrapping.Wrap });
+            body.Children.Add(Selectable.Text(text, 15, "Ink", null, 22));      // a message can be copied
             w.Content = col;
             w.MouseLeftButtonDown += (s, e) => { if (e.ButtonState == MouseButtonState.Pressed) w.DragMove(); };
             return w;
@@ -150,10 +150,7 @@ namespace QuickDeploy
             col.Children.Add(new Border { Height = 3, Background = B("Yellow") });      // the window's tape
             var body = new StackPanel { Margin = new Thickness(24, 20, 24, 20) };
             col.Children.Add(body);
-            body.Children.Add(new TextBlock
-            {
-                Text = text, Foreground = B("Ink"), FontSize = 15, LineHeight = 22, TextWrapping = TextWrapping.Wrap,
-            });
+            body.Children.Add(Selectable.Text(text, 15, "Ink", null, 22));      // a message can be copied
             if (input != null) body.Children.Add(input);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 24, 0, 0) };
             body.Children.Add(buttons);

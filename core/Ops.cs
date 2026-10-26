@@ -347,6 +347,21 @@ namespace Hd2Mod
 
         /// <summary>HD2 Arsenal's deployed (else selected) profile, read only: names,
         /// folders, order, on/off and option choices; and its game folder.</summary>
+        /// <summary>How many mods a folder holds one level down, when it is no mod itself: no
+        /// manifest.json and no patch file at its top, and subfolders that each have one of them at
+        /// theirs. 0 for a mod folder.</summary>
+        public static int ModsInside(string folder)
+        {
+            try
+            {
+                if (File.Exists(System.IO.Path.Combine(folder, "manifest.json"))) return 0;
+                if (Deploy.List(folder).Any(f => Deploy.Patch.IsMatch(f))) return 0;
+                return Directory.EnumerateDirectories(folder).Count(sub =>
+                    File.Exists(System.IO.Path.Combine(sub, "manifest.json")) || Deploy.List(sub).Any(f => Deploy.Patch.IsMatch(f)));
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return 0; }
+        }
+
         public static (Library Lib, string Game) ImportArsenal(string path = null, string profile = null)
         {
             path = path ?? Store.ArsenalFile();
@@ -355,11 +370,25 @@ namespace Hd2Mod
             var key = First(profile, Json.Str(d, "deployedProfile"), Json.Str(d, "selectedProfile"), "default");
             var prof = Json.Obj(Json.Obj(d, "modsList"), key);
             if (prof == null) throw new ModError("no profile " + Repr(key) + " in " + path);
-            var lib = new Library();
-            foreach (var m in Json.List(prof, "mods").OfType<Dictionary<string, object>>())
+            // Arsenal 0.37 (librarySystemVersion 1) keeps every mod once in modsLibrary; a profile
+            // only names each by uuid, with its own on/off and choices (optionsConfig). Before, each
+            // profile entry held the mod itself. Read as the old shape, the new one gave no mods,
+            // and Arsenal was not found at all (a player's file, 2026-10-26)
+            var library = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var x in Json.List(d, "modsLibrary").OfType<Dictionary<string, object>>())
             {
+                var u = Json.Str(x, "uuid");
+                if (u != null && !library.ContainsKey(u)) library[u] = x;
+            }
+            var lib = new Library();
+            foreach (var entry in Json.List(prof, "mods").OfType<Dictionary<string, object>>())
+            {
+                if (Json.Str(entry, "type") == "separator") continue;          // a heading in Arsenal's list, no mod
+                var m = entry;
+                if (Json.Str(entry, "path") == null && Json.Str(entry, "uuid") is string id && library.TryGetValue(id, out var kept)) m = kept;
                 var options = new List<OptionChoice>();
-                foreach (var o in Json.List(m, "options").OfType<Dictionary<string, object>>())
+                var chosen = entry.ContainsKey("optionsConfig") ? Json.List(entry, "optionsConfig") : Json.List(m, "options");
+                foreach (var o in chosen.OfType<Dictionary<string, object>>())
                     options.Add(new OptionChoice
                     {
                         Name = Json.Str(o, "name") ?? "", Enabled = Truthy(o, "enabled", true),
@@ -373,7 +402,7 @@ namespace Hd2Mod
                 {
                     Id = First(Json.Str(m, "uuid"), Guid.NewGuid().ToString()),
                     Name = First(Json.Str(m, "label"), System.IO.Path.GetFileName(p)),
-                    Path = p, Source = p, Enabled = Truthy(m, "enabled", true), Options = options,
+                    Path = p, Source = p, Enabled = Truthy(entry, "enabled", true), Options = options,
                     Nexus = ArsenalNexus(Json.Obj(m, "nexusData")), Tags = ArsenalTags(m),
                 });
             }
@@ -382,6 +411,12 @@ namespace Hd2Mod
             // list comes in the other way round (proven 2026-10-25: Arsenal deployed 278 files
             // with it on; the list reversed matched all of them, the list as stored did not).
             if (Truthy(d, "setTopPriority", false)) lib.Mods.Reverse();
+            // entries, and not one of them read: a shape this program does not know, said as such
+            // (the user, 2026-10-26: a list read as empty was hidden, as if there were none)
+            int entries = Json.List(prof, "mods").OfType<Dictionary<string, object>>().Count(x => Json.Str(x, "type") != "separator");
+            if (entries > 0 && lib.Mods.Count == 0)
+                throw new ModError("HD2 Arsenal's list has " + entries + " mods, and none of them could be read: its format may have changed" +
+                                   (d.ContainsKey("librarySystemVersion") ? " (librarySystemVersion " + Json.Long(d, "librarySystemVersion") + ")" : ""), "bad_format", path);
             lib.ImportedFrom = "HD2 Arsenal: " + (Json.Str(prof, "label") ?? key);
             return (lib, Json.Str(d, "userGameDir"));
         }

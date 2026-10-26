@@ -32,6 +32,13 @@ namespace Hd2Mod
         public string BootKind, BootVersion;
         /// <summary>Whether it wraps the old menus' register calls (a translation pack does).</summary>
         public bool WrapsMenus;
+        /// <summary>Takes Chef Shared Loader's interface as its own argument (local chef = ...)
+        /// and uses it without testing for it: under any other loader the first chef.x fails
+        /// (NarrowHUD 1.0.5 under Boot Mod Loader, 2026-10-26: "attempt to index local 'chef' (a
+        /// nil value)").</summary>
+        public bool ChefApi;
+        /// <summary>The resource's size in its archive's row (the text and 8 bytes before it).</summary>
+        public long Size;
     }
 
     /// <summary>What a mod's Lua is: its scripts, what it needs, what stops it.</summary>
@@ -51,11 +58,22 @@ namespace Hd2Mod
         /// <summary>The loader's version, from its boot or Chef's core.</summary>
         public string LoaderVersion => Scripts.Select(s => s.BootVersion).FirstOrDefault(v => v != null);
         public IEnumerable<string> Addons => Scripts.Where(s => s.Name != null && (s.Header == "Addon" || s.Header == "Boot")).Select(s => s.Name).Distinct();
+        /// <summary>Its scripts Chef Shared Loader would start that are too big for it (ChefMaxLua).</summary>
+        public IEnumerable<LuaScript> TooBigForChef => Scripts.Where(s => s.Size > LuaMods.ChefMaxLua && (s.Header == "Addon" || s.Header == "Boot"));
         /// <summary>The scripts the game's Lua cannot run.</summary>
         public IEnumerable<LuaScript> Broken => Scripts.Where(s => s.Error != null || s.LuaJitBytecode || s.Jit.Count > 0);
         /// <summary>The mod it translates (by name, see LuaMods.Packs), else null.</summary>
         public Mod PackOf;
         public string PackOfName;
+        /// <summary>Its boot only starts itself, and Boot Mod Loader runs it as a guest: a deploy
+        /// takes it off the start-up slot (GuestBoots). Set by Check.</summary>
+        public bool Guest;
+        /// <summary>Chef Shared Loader helping Boot Mod Loader (Loaders.Helper): no second loader, no
+        /// boot in the way. Set by Check.</summary>
+        public bool Helper;
+        /// <summary>Its boot only starts itself, and Chef Shared Loader, in effect, runs it too (its
+        /// log, 2026-10-26: "running another mod's boot script too"). Set by Check.</summary>
+        public bool ChefRuns;
     }
 
     /// <summary>A problem the load order gives the mods' scripts, in codes; the window and
@@ -63,7 +81,7 @@ namespace Hd2Mod
     public class LuaIssue
     {
         /// <summary>"boot_conflict", "two_loaders", "no_loader", "needs_chef", "same_name",
-        /// "cannot_run", "pack_alone".</summary>
+        /// "cannot_run", "too_big_for_chef", "pack_alone".</summary>
         public string Kind;
         /// <summary>The mods it is about, the one that wins (or matters) first.</summary>
         public List<Mod> Mods = new List<Mod>();
@@ -100,7 +118,12 @@ namespace Hd2Mod
 
         // what was found in each archive, kept between runs in lua_scan.json by the archive's
         // size and time; a new version of the checks reads every archive again
-        const int ScanVersion = 2;
+        const int ScanVersion = 4;
+
+        /// <summary>Chef Shared Loader 1.2.1 reads no Lua resource whose row size is over this
+        /// (`MAX_LUA = 4 * 1024 * 1024`, `if size > MAX_LUA` in its core; its log: "Lua resource(s)
+        /// over 4 MB not read"). Super Holo HUD's 8.8 MB script did not start under it (2026-10-26).</summary>
+        public const long ChefMaxLua = 4 * 1024 * 1024;
         static Dictionary<string, (string Sig, List<LuaScript> Scripts)> disk;
         static bool diskDirty;
 
@@ -128,7 +151,9 @@ namespace Hd2Mod
                         int n = (int)Math.Min(BitConverter.ToUInt32(data, 0), (uint)(data.Length - 8));
                         var body = new byte[n];
                         Array.Copy(data, 8, body, 0, n);
-                        out_.Add(Look(r.Id, body));
+                        var s = Look(r.Id, body);
+                        s.Size = r.Size;
+                        out_.Add(s);
                     }
             lock (known)
             {
@@ -159,7 +184,7 @@ namespace Hd2Mod
                         Id = ulong.Parse(Json.Str(x, "id") ?? "0", NumberStyles.HexNumber), Header = Json.Str(x, "header"), Name = Json.Str(x, "name"),
                         BmlName = Json.Bool(x, "bml"), ChefOnly = Json.Bool(x, "chef_only"), Bytecode = Json.Bool(x, "bytecode"),
                         LuaJitBytecode = Json.Bool(x, "luajit_bytecode"), BootKind = Json.Str(x, "boot_kind"), BootVersion = Json.Str(x, "version"),
-                        WrapsMenus = Json.Bool(x, "wraps_menus"), Jit = Json.List(x, "jit").OfType<string>().ToList(),
+                        WrapsMenus = Json.Bool(x, "wraps_menus"), ChefApi = Json.Bool(x, "chef_api"), Size = Json.Long(x, "size"), Jit = Json.List(x, "jit").OfType<string>().ToList(),
                     };
                     if (Json.Str(x, "error") != null) { s.Error = ((int)Json.Long(x, "line"), Json.Str(x, "error")); s.ErrorKind = Json.Str(x, "error_kind"); }
                     return s;
@@ -184,7 +209,7 @@ namespace Hd2Mod
                         {
                             ["id"] = s.Id.ToString("x16"), ["header"] = s.Header, ["name"] = s.Name, ["bml"] = s.BmlName, ["chef_only"] = s.ChefOnly,
                             ["bytecode"] = s.Bytecode, ["luajit_bytecode"] = s.LuaJitBytecode, ["boot_kind"] = s.BootKind, ["version"] = s.BootVersion,
-                            ["wraps_menus"] = s.WrapsMenus, ["jit"] = s.Jit.Cast<object>().ToList(),
+                            ["wraps_menus"] = s.WrapsMenus, ["chef_api"] = s.ChefApi, ["size"] = s.Size, ["jit"] = s.Jit.Cast<object>().ToList(),
                             ["line"] = (long)(s.Error?.Line ?? 0), ["error"] = s.Error?.Message, ["error_kind"] = s.ErrorKind,
                         }).ToList(),
                     };
@@ -230,6 +255,7 @@ namespace Hd2Mod
                 if (tokens != null)
                 {
                     s.Jit = JitUses(tokens);
+                    s.ChefApi = UsesChefApi(tokens);
                     // the menus by name or as rawget(_G, "ModOptionsMenu"), as ActionCam简体中文 reads them
                     s.WrapsMenus = tokens.Any(t => t.Kind == LuaSyntax.T.Name && (t.Text == "register_option" || t.Text == "register_binding"))
                                 && tokens.Any(t => (t.Kind == LuaSyntax.T.Name || t.Kind == LuaSyntax.T.String) && (t.Text == "ModOptionsMenu" || t.Text == "ModBindingsMenu"));
@@ -341,6 +367,33 @@ namespace Hd2Mod
             return found.ToList();
         }
 
+        /// <summary>local chef = ... (Chef Shared Loader hands its interface to the script as its
+        /// argument), then chef.x / chef:x with chef itself never tested (if chef, not chef,
+        /// chef and, type(chef), chef == ...): nothing else gives that argument.</summary>
+        public static bool UsesChefApi(List<LuaSyntax.Token> t)
+        {
+            const int Name = LuaSyntax.T.Name;
+            bool takes = false;
+            for (int i = 0; i + 3 < t.Count && !takes; i++)
+                takes = t[i].Kind == LuaSyntax.T.Local && t[i + 1].Kind == Name && t[i + 1].Text == "chef" && t[i + 2].Kind == '=' && t[i + 3].Kind == LuaSyntax.T.Dots;
+            if (!takes) return false;
+            bool used = false, tested = false;
+            for (int i = 0; i < t.Count; i++)
+            {
+                if (t[i].Kind != Name || t[i].Text != "chef") continue;
+                int prev = i > 0 ? t[i - 1].Kind : -1, next = i + 1 < t.Count ? t[i + 1].Kind : -1;
+                if (prev == '.' || prev == ':') continue;                    // a field of something else
+                bool field = next == '.' || next == ':' || next == '[';
+                if (field) used = true;
+                else if (prev == LuaSyntax.T.If || prev == LuaSyntax.T.Not || prev == LuaSyntax.T.And || prev == LuaSyntax.T.Or ||
+                         prev == LuaSyntax.T.Eq || prev == LuaSyntax.T.Ne || prev == LuaSyntax.T.Elseif || prev == LuaSyntax.T.While ||
+                         next == LuaSyntax.T.And || next == LuaSyntax.T.Or || next == LuaSyntax.T.Then || next == LuaSyntax.T.Eq || next == LuaSyntax.T.Ne ||
+                         (prev == '(' && next == ')' && i > 1 && t[i - 2].Kind == Name && t[i - 2].Text == "type"))
+                    tested = true;
+            }
+            return used && !tested;
+        }
+
         /// <summary>Whether the name at i stands in a local list or a parameter list.</summary>
         static bool IsDeclared(List<LuaSyntax.Token> t, int i)
         {
@@ -396,8 +449,9 @@ namespace Hd2Mod
                     var mods = ml.Scripts.Where(s => s.Header == "Addon" || s.Header == "Boot").ToList();
                     if (mods.Count > 0)
                     {
-                        ml.Needs = mods.Any(s => s.ChefOnly || s.Header == "Boot" || !s.BmlName) ? "chef" : "any";
-                        if (ml.Needs == "chef") ml.NeedsWhy = mods.Any(s => s.ChefOnly || s.Header == "Boot") ? "declared" : "name";
+                        ml.Needs = mods.Any(s => s.ChefOnly || s.Header == "Boot" || !s.BmlName || s.ChefApi) ? "chef" : "any";
+                        if (ml.Needs == "chef")
+                            ml.NeedsWhy = mods.Any(s => s.ChefOnly || s.Header == "Boot") ? "declared" : mods.Any(s => s.ChefApi) ? "api" : "name";
                     }
                 }
                 out_.Add(ml);
@@ -433,11 +487,41 @@ namespace Hd2Mod
 
         /// <summary>The scripts the load order gives the game: whose boot runs, which loader that
         /// is, and the problems, the enabled mods only.</summary>
-        public static (ModLua BootOwner, List<ModLua> BootMods, string Running, List<LuaIssue> Issues) Check(Library lib, List<ModLua> all)
+        public static (ModLua BootOwner, List<ModLua> BootMods, string Running, List<LuaIssue> Issues) Check(Library lib, List<ModLua> all) =>
+            Check(lib, all, Loaders.Chosen(lib), true);
+
+        /// <summary>Check, had this loader been chosen (null: none). Only mark sets the mods' flags
+        /// (Helper, Guest, ChefRuns); the window asks every choice beside the one in effect.</summary>
+        public static (ModLua BootOwner, List<ModLua> BootMods, string Running, List<LuaIssue> Issues) Check(Library lib, List<ModLua> all, Mod chosen, bool mark)
         {
-            var on = all.Where(x => x.Mod.Enabled).ToList();          // in load order: the last one wins
+            // what a deploy puts in the game, in its order: the last one wins; of the loaders only
+            // the one in effect, last (Loaders)
+            var order = Loaders.DeployOrderFor(lib, chosen).Select((m, i) => (m.Id, i)).ToDictionary(x => x.Id, x => x.i);
+            var on = all.Where(x => order.ContainsKey(x.Mod.Id)).OrderBy(x => order[x.Mod.Id]).ToList();
             var issues = new List<LuaIssue>();
-            var bootMods = on.Where(x => x.Boot != null).ToList();
+            // Chef helping Boot Mod Loader: its boot comes before the loader's and is its own stub
+            var helper = Loaders.HelperFor(lib, chosen);
+            bool IsHelper(ModLua x) => helper != null && x.Mod.Id == helper.Id;
+            var bootMods = on.Where(x => x.Boot != null && !IsHelper(x)).ToList();
+            // a boot that only starts its own mod is run by Boot Mod Loader as a guest, off the
+            // slot: it takes nothing from the loader and is in no conflict (the user, 2026-10-26)
+            var guests = GuestBoots.Guests(bootMods.Select(x => (x.Boot.BootKind, x.Boot.BootVersion, x.Boot.Bytecode)).ToList())
+                                   .Select(i => bootMods[i]).ToList();
+            bootMods = bootMods.Where(x => !guests.Contains(x)).ToList();
+            // Chef Shared Loader in effect runs the boots deployed before it as well (its log,
+            // 2026-10-26: "running another mod's boot script too ... patch_91"): no conflict either.
+            // The same boots Boot Mod Loader takes as guests (GuestBoots.Guests's rule).
+            var chefRuns = new List<ModLua>();
+            if (bootMods.LastOrDefault()?.Boot.BootKind == "chef_stub")
+                chefRuns = bootMods.Where(x => x.Boot.BootKind == "other" && !x.Boot.Bytecode).ToList();
+            bootMods = bootMods.Where(x => !chefRuns.Contains(x)).ToList();
+            if (mark)
+                foreach (var x in all)
+                {
+                    x.Helper = IsHelper(x);
+                    x.Guest = guests.Contains(x);
+                    x.ChefRuns = chefRuns.Contains(x);
+                }
             var owner = bootMods.LastOrDefault();
             string running;
             if (owner == null) running = null;
@@ -450,14 +534,14 @@ namespace Hd2Mod
             }
             if (bootMods.Count > 1)
                 issues.Add(new LuaIssue { Kind = "boot_conflict", Mods = Enumerable.Reverse(bootMods).Select(x => x.Mod).ToList() });
-            var loaders = on.Where(x => x.Loader != null).ToList();
+            var loaders = on.Where(x => x.Loader != null && !IsHelper(x)).ToList();
             if (loaders.Select(x => x.Loader).Distinct().Count() > 1)
                 issues.Add(new LuaIssue { Kind = "two_loaders", Mods = loaders.OrderByDescending(x => x == owner).Select(x => x.Mod).ToList(), Detail = running });
             var wanting = on.Where(x => x.Needs != null).ToList();
             if (wanting.Count > 0 && running != "bml" && running != "chef" && running != "bsl")
                 issues.Add(new LuaIssue { Kind = "no_loader", Mods = (owner != null ? new[] { owner.Mod } : new Mod[0]).Concat(wanting.Select(x => x.Mod)).ToList(),
                                           Detail = owner != null ? "other" : null });
-            else if (running != "chef")
+            else if (running != "chef" && helper == null)
             {
                 var chefOnly = wanting.Where(x => x.Needs == "chef").ToList();
                 if (chefOnly.Count > 0) issues.Add(new LuaIssue { Kind = "needs_chef", Mods = chefOnly.Select(x => x.Mod).ToList(), Detail = running });
@@ -474,9 +558,54 @@ namespace Hd2Mod
                 issues.Add(new LuaIssue { Kind = "same_name", Mods = Enumerable.Reverse(kv.Value).Select(x => x.Mod).ToList(), Detail = kv.Key });
             foreach (var x in on.Where(x => x.Broken.Any()))
                 issues.Add(new LuaIssue { Kind = "cannot_run", Mods = { x.Mod } });
+            // started by Chef Shared Loader (in effect, or helping with the mods made for it) but too big for it
+            foreach (var x in on.Where(x => x.TooBigForChef.Any() && (running == "chef" || (helper != null && x.Needs == "chef"))))
+                issues.Add(new LuaIssue { Kind = "too_big_for_chef", Mods = { x.Mod }, Detail = x.TooBigForChef.Max(s => s.Size).ToString() });
             foreach (var x in on.Where(x => x.PackOfName != null && (x.PackOf == null || !x.PackOf.Enabled)))
                 issues.Add(new LuaIssue { Kind = "pack_alone", Mods = new[] { x.Mod }.Concat(x.PackOf != null ? new[] { x.PackOf } : new Mod[0]).ToList(), Detail = x.PackOfName });
             return (owner, bootMods, running, issues);
+        }
+
+        /// <summary>One reason mods would not start under a choice of loader.</summary>
+        public class Outcome
+        {
+            /// <summary>"no_loader", "needs_chef", "too_big_for_chef", "boot_off".</summary>
+            public string Why;
+            public List<Mod> Mods = new List<Mod>();
+            /// <summary>boot_off: the mod whose boot runs instead.</summary>
+            public Mod Over;
+        }
+
+        /// <summary>For every choice of loader the library has, and for none (key null): the enabled
+        /// mods that would not start under it, and why. The same question for each choice, so the
+        /// window can say the same thing under each (the user, 2026-10-26: "好不统一"). Reasons that do
+        /// not depend on the choice (cannot_run, same_name, pack_alone) are not in it.</summary>
+        public static List<(Mod Choice, List<Outcome> Outcomes)> Outcomes(Library lib, List<ModLua> all)
+        {
+            var byId = all.ToDictionary(x => x.Mod.Id);
+            var at = lib.Mods.Select((m, n) => (m.Id, n)).ToDictionary(x => x.Id, x => x.n);
+            var out_ = new List<(Mod, List<Outcome>)>();
+            foreach (var choice in Loaders.Of(lib).Concat(new Mod[] { null }))
+            {
+                var (owner, _, _, issues) = Check(lib, all, choice, false);
+                var seen = new HashSet<string>();
+                var list = new List<Outcome>();
+                void Add(string why, IEnumerable<Mod> mods, Mod over = null)
+                {
+                    var o = new Outcome { Why = why, Over = over };
+                    foreach (var m in mods) if (seen.Add(m.Id)) o.Mods.Add(m);
+                    if (o.Mods.Count > 0) list.Add(o);
+                }
+                // the order: the reason that stops a mod outright first; a mod is said once
+                foreach (var i in issues.Where(i => i.Kind == "no_loader"))
+                    Add("no_loader", i.Mods.Where(m => byId.TryGetValue(m.Id, out var x) && x.Needs != null));
+                foreach (var i in issues.Where(i => i.Kind == "needs_chef")) Add("needs_chef", i.Mods);
+                Add("too_big_for_chef", issues.Where(i => i.Kind == "too_big_for_chef").SelectMany(i => i.Mods));
+                foreach (var i in issues.Where(i => i.Kind == "boot_conflict")) Add("boot_off", i.Mods.Skip(1), i.Mods[0]);
+                foreach (var o in list) o.Mods = o.Mods.OrderBy(m => at.TryGetValue(m.Id, out var n) ? n : int.MaxValue).ToList();
+                out_.Add((choice, list));
+            }
+            return out_;
         }
 
         // ------------------------------------------------------------ the last session
@@ -595,6 +724,125 @@ namespace Hd2Mod
                 .Where(d => d.When <= when).OrderBy(d => d.When).ToList();
             if (list.Count == 0) return null;
             return list[list.Count - 1];
+        }
+
+        /// <summary>The mods the deploy at a time put in the game that the deploy before it had
+        /// not (a new mod, or a new version: names carry versions); null when either is not
+        /// recorded.</summary>
+        public static List<string> AddedAt(DateTime when)
+        {
+            var list = Json.List(Store.Load("deploy_history.json"), "deploys").OfType<Dictionary<string, object>>()
+                .Select(d => (When: DateTimeOffset.FromUnixTimeSeconds(Json.Long(d, "time")).LocalDateTime, Mods: Json.List(d, "mods").OfType<string>().ToList()))
+                .Where(d => d.When <= when).OrderBy(d => d.When).ToList();
+            if (list.Count < 2) return null;
+            var before = new HashSet<string>(list[list.Count - 2].Mods, StringComparer.Ordinal);
+            return list[list.Count - 1].Mods.Where(m => !before.Contains(m)).ToList();
+        }
+
+        // ------------------------------------------------------------ where a crash happened
+
+        /// <summary>How many of the newest dumps a crash's place is compared with, and how often
+        /// it must appear there to be one the game has all the time: a card for it says nothing
+        /// (the user, 2026-10-26: 21 of the last 25 were helldivers2.exe+0x664D86, on the
+        /// renderer thread, and the card only listed the mods).</summary>
+        public const int Recent = 50, Common = 3;
+
+        static Dictionary<string, object> sitesKnown;
+        // a site read since crash_sites.json was last written
+        static bool sitesDirty;
+
+        /// <summary>Where a dump's crash happened: the module and the offset of the faulting
+        /// address (helldivers2.exe+0x664D86), read from its exception and module streams; kept
+        /// by file name in crash_sites.json (a dump does not change). Null when it cannot be read.</summary>
+        public static string SiteOf(string file)
+        {
+            var name = Path.GetFileName(file);
+            lock (Folder)
+            {
+                if (sitesKnown == null)
+                {
+                    try { sitesKnown = Json.Obj(Store.Load("crash_sites.json"), "sites") ?? new Dictionary<string, object>(); }
+                    catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is FormatException) { sitesKnown = new Dictionary<string, object>(); }
+                }
+                if (sitesKnown.TryGetValue(name, out var v)) return v as string;
+            }
+            string site = null;
+            try { site = ReadSite(file); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return null; }
+            lock (Folder) { sitesKnown[name] = site; sitesDirty = true; }
+            return site;
+        }
+
+        /// <summary>crash_sites.json written only when a site was read since: written on every state
+        /// read, it woke the window's watcher, which read the state again, every few seconds, for as
+        /// long as the window was open (2026-10-26: 144 000 file operations a second, a core busy).</summary>
+        static void SaveSites()
+        {
+            lock (Folder)
+            {
+                if (sitesKnown == null || !sitesDirty) return;
+                sitesDirty = false;
+                try { Store.Save("crash_sites.json", new Dictionary<string, object> { ["sites"] = sitesKnown }); }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+            }
+        }
+
+        static string ReadSite(string path)
+        {
+            using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096))
+            {
+                var head = new byte[32];
+                if (Deploy.Fill(f, head) < 32 || BitConverter.ToUInt32(head, 0) != 0x504D444D) return null;     // "MDMP"
+                uint count = BitConverter.ToUInt32(head, 8), dirAt = BitConverter.ToUInt32(head, 12);
+                if (count > 1000) return null;
+                f.Seek(dirAt, SeekOrigin.Begin);
+                var dir = new byte[count * 12];
+                if (Deploy.Fill(f, dir) < dir.Length) return null;
+                uint exAt = 0, modAt = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    uint type = BitConverter.ToUInt32(dir, i * 12), at = BitConverter.ToUInt32(dir, i * 12 + 8);
+                    if (type == 6) exAt = at;          // the exception
+                    if (type == 4) modAt = at;         // the modules
+                }
+                if (exAt == 0) return null;
+                var rec = new byte[24];                // after the thread id: code, flags, record, address
+                f.Seek(exAt + 8, SeekOrigin.Begin);
+                if (Deploy.Fill(f, rec) < 24) return null;
+                ulong address = BitConverter.ToUInt64(rec, 16);
+                if (modAt != 0)
+                {
+                    var n = new byte[4];
+                    f.Seek(modAt, SeekOrigin.Begin);
+                    if (Deploy.Fill(f, n) < 4) return null;
+                    uint mods = Math.Min(BitConverter.ToUInt32(n, 0), 4096u);
+                    var table = new byte[mods * 108];
+                    int got = Deploy.Fill(f, table);
+                    for (int i = 0; i + 108 <= got; i += 108)
+                    {
+                        ulong b = BitConverter.ToUInt64(table, i);
+                        uint size = BitConverter.ToUInt32(table, i + 8), nameAt = BitConverter.ToUInt32(table, i + 20);
+                        if (address < b || address >= b + size) continue;
+                        f.Seek(nameAt, SeekOrigin.Begin);
+                        if (Deploy.Fill(f, n) < 4) break;
+                        var chars = new byte[Math.Min(BitConverter.ToUInt32(n, 0), 1024u)];
+                        Deploy.Fill(f, chars);
+                        var module = Path.GetFileName(Encoding.Unicode.GetString(chars));
+                        return module + "+0x" + (address - b).ToString("X");
+                    }
+                }
+                return "0x" + address.ToString("X");
+            }
+        }
+
+        /// <summary>The newest dump's place, and how many of the newest Recent dumps crashed at it.</summary>
+        public static (string Site, int Times, int Of) SiteCount(string newest)
+        {
+            var site = SiteOf(Path.Combine(Folder, "dumps", newest));
+            var recent = Crashes(Recent);
+            int times = site == null ? 0 : recent.Count(c => SiteOf(Path.Combine(Folder, "dumps", c.File)) == site);
+            SaveSites();
+            return (site, times, recent.Count);
         }
 
         /// <summary>A deploy recorded: when, and the mods it put in the game, in load order.</summary>
