@@ -25,6 +25,7 @@ namespace QuickDeploy
         int groupCol;
         // a group just made, opened once the state that has it arrives
         (string Parent, string Name)? openWhenMade;
+        // the least a column may be: more levels than fit at this width scroll sideways
         const double GroupColWidth = 250;
 
         // a top group's colour, its groups inside wear it too
@@ -196,17 +197,31 @@ namespace QuickDeploy
                 Grid.SetColumn(col, i);
                 GroupCols.Children.Add(col);
             }
+            FitColumns();
             // sideways: a column just opened comes into view, as Finder scrolls to it; otherwise
             // the strip stays where it was
             restoring = true;
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 restoring = false;
+                FitColumns();       // laid out now: the first drawing had no width to share yet
                 foreach (var c in GroupCols.Children.OfType<Border>())
                     if (c.Tag is GroupDrop d && c.Child is ScrollViewer sv && colOffsets.TryGetValue(d.Group ?? "", out var y)) sv.ScrollToVerticalOffset(y);
                 if (parents.Count > hadCols) GroupScroll.ScrollToRightEnd();
                 else GroupScroll.ScrollToHorizontalOffset(hadX);
             }), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        /// <summary>The columns share the width (the user, 2026-10-27): one level is the whole
+        /// width, two a half each, and so on down to GroupColWidth; past that they keep it and
+        /// the strip scrolls sideways.</summary>
+        void FitColumns()
+        {
+            int n = GroupCols.Children.Count;
+            double room = Math.Floor(GroupScroll.ViewportWidth);
+            if (n == 0 || room <= 0) return;           // not laid out yet: SizeChanged comes back
+            double w = Math.Max(GroupColWidth, Math.Floor(room / n));
+            foreach (var c in GroupCols.Children.OfType<Border>()) c.Width = w;
         }
 
         // each column's scroll, by the group it shows ("" the top), and the strip's; restoring
@@ -428,7 +443,9 @@ namespace QuickDeploy
         /// make(parent), when given, adds "a new group here" to each level that may hold one.</summary>
         MenuItem GroupPicker(string header, string current, Func<string, bool> allowed, Action<string> pick, Action<string> make, string hereKey, bool withTop = false)
         {
-            var root = new MenuItem { Header = header };
+            // a line with lines of its own needs the style that opens them (App.xaml: SubMenuItem)
+            var sub = (Style)FindResource("SubMenuItem");
+            var root = new MenuItem { Header = header, Style = sub };
             MenuItem Leaf(string text, bool ticked, Action act)
             {
                 var it = new MenuItem { Header = text, IsChecked = ticked, IsEnabled = act != null };
@@ -441,7 +458,7 @@ namespace QuickDeploy
                 bool may = allowed(g.Id);
                 bool canMake = make != null && LevelOf(g.Id) < Groups.Depth;
                 if (kids.Count == 0 && !canMake) return Leaf(g.Name, current == g.Id, may ? () => pick(g.Id) : (Action)null);
-                var mi = new MenuItem { Header = g.Name };
+                var mi = new MenuItem { Header = g.Name, Style = sub };
                 mi.Items.Add(Leaf(Texts.F(hereKey, g.Name), current == g.Id, may ? () => pick(g.Id) : (Action)null));
                 if (kids.Count > 0)
                 {
@@ -616,33 +633,55 @@ namespace QuickDeploy
                 {
                     if (e.LeftButton != MouseButtonState.Pressed) { gDragFrom = null; return; }
                     if (Math.Abs(at.X - gDragFrom.Value.Start.X) < 6 && Math.Abs(at.Y - gDragFrom.Value.Start.Y) < 6) return;
-                    gDragging = true;
-                    GroupScroll.CaptureMouse();
-                    gGhost = new Border
-                    {
-                        Background = B("Ground900"), BorderBrush = B("Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(10, 6, 10, 6),
-                        Child = new TextBlock { Text = DragLabel(), FontWeight = FontWeights.SemiBold, Foreground = B("Ink") },
-                    };
-                    DragLayer.Children.Add(gGhost);
+                    StartGroupDrag();
                 }
-                var onLayer = e.GetPosition(DragLayer);
-                Canvas.SetLeft(gGhost, onLayer.X + 14);
-                Canvas.SetTop(gGhost, onLayer.Y + 10);
-                Target(DropAt(at));
+                DragTo(at, e.GetPosition(DragLayer));
                 e.Handled = true;
             };
             GroupScroll.PreviewMouseLeftButtonUp += (s, e) =>
             {
                 if (!gDragging) { gDragFrom = null; return; }
-                var to = gTarget?.Tag as GroupDrop;
-                var from = gDragFrom.Value;
-                EndGroupDrag();
                 e.Handled = true;
-                if (to != null) DropInto(from.Kind, from.Id, to.Group);
+                FinishGroupDrag();
             };
             GroupScroll.LostMouseCapture += (s, e) => { if (gDragging) EndGroupDrag(); };
             PreviewKeyDown += (s, e) => { if (gDragging && e.Key == Key.Escape) { EndGroupDrag(); e.Handled = true; } };
             PreviewKeyDown += GroupKeys;
+            GroupScroll.SizeChanged += (s, e) => FitColumns();
+        }
+
+        /// <summary>The drag begins: its picture first, then the mouse taken. Taking the mouse
+        /// raises a move at once, which found no picture and closed the window (the user,
+        /// 2026-10-27).</summary>
+        void StartGroupDrag()
+        {
+            gGhost = new Border
+            {
+                Background = B("Ground900"), BorderBrush = B("Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(10, 6, 10, 6),
+                Child = new TextBlock { Text = DragLabel(), FontWeight = FontWeights.SemiBold, Foreground = B("Ink") },
+            };
+            DragLayer.Children.Add(gGhost);
+            gDragging = true;
+            GroupScroll.CaptureMouse();
+        }
+
+        /// <summary>The picture by the pointer (at: on the columns; onLayer: on the drag layer),
+        /// and the folder or column under it lit when the drag may go there.</summary>
+        void DragTo(Point at, Point onLayer)
+        {
+            if (gGhost == null) return;
+            Canvas.SetLeft(gGhost, onLayer.X + 14);
+            Canvas.SetTop(gGhost, onLayer.Y + 10);
+            Target(DropAt(at));
+        }
+
+        /// <summary>Let go: into the folder or column lit, if any.</summary>
+        void FinishGroupDrag()
+        {
+            var to = gTarget?.Tag as GroupDrop;
+            var from = gDragFrom.Value;
+            EndGroupDrag();
+            if (to != null) DropInto(from.Kind, from.Id, to.Group);
         }
 
         string DragLabel()
@@ -710,7 +749,10 @@ namespace QuickDeploy
         /// HD2QD_WHEEL_OUT. Posted clicks do not reach WPF, so the click is raised here.</summary>
         void GroupTest()
         {
-            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") != "groups") return;
+            var which = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST");
+            if (which == "groupdrag") { GroupDragTest(); return; }
+            if (which == "groupmenu") { GroupMenuTest(); return; }
+            if (which != "groups") return;
             var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
             t.Tick += (s, e) =>
             {
@@ -765,6 +807,81 @@ namespace QuickDeploy
                 }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
                 };
                 wait.Start();
+            };
+            t.Start();
+        }
+
+        /// <summary>HD2QD_CLICK_TEST=groupdrag: the last mod of the top column dragged onto its
+        /// first folder, through the drag's own steps (a posted drag does not reach WPF); the
+        /// folder lit and the group the mod ends in go to HD2QD_WHEEL_OUT.</summary>
+        void GroupDragTest()
+        {
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+            t.Tick += (s, e) =>
+            {
+                t.Stop();
+                groupView = true;
+                groupPath.Clear();
+                RenderList();
+                UpdateLayout();
+                var first = GroupCols.Children.OfType<Border>().First();
+                var items = ((StackPanel)((ScrollViewer)first.Child).Content).Children.OfType<Border>().ToList();
+                var folder = items.First(b => b.Tag is GroupDrop);
+                var modItem = items.Last(b => b.Tag == null);
+                var mod = GroupShown().Last(m => m.Group == null);
+                var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                var log = new System.Text.StringBuilder();
+                gDragFrom = ("mod", mod.Id, mod.Name, modItem.TranslatePoint(new Point(20, 20), GroupScroll));
+                StartGroupDrag();
+                log.AppendLine("dragging " + gDragging + " ghost " + (gGhost != null) + " captured " + GroupScroll.IsMouseCaptured);
+                var over = folder.TranslatePoint(new Point(60, 20), GroupScroll);
+                DragTo(over, folder.TranslatePoint(new Point(60, 20), DragLayer));
+                var target = ((GroupDrop)folder.Tag).Group;
+                log.AppendLine("lit " + (gTarget == folder) + " folder " + st.Groups.First(g => g.Id == target).Name);
+                FinishGroupDrag();
+                log.AppendLine("ended dragging " + gDragging + " captured " + GroupScroll.IsMouseCaptured);
+                var check = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                check.Tick += (s2, e2) =>
+                {
+                    check.Stop();
+                    var now = st.Mods.First(m => m.Id == mod.Id);
+                    log.AppendLine("mod " + mod.Name + " group " + (now.Group == null ? "-" : st.Groups.First(g => g.Id == now.Group).Name));
+                    if (path != null) System.IO.File.WriteAllText(path, log.ToString());
+                };
+                check.Start();
+            };
+            t.Start();
+        }
+
+        /// <summary>HD2QD_CLICK_TEST=groupmenu: the menu of a mod in a group opened, with "move to
+        /// group" and its first group open, so a picture of the windows can show them.</summary>
+        void GroupMenuTest()
+        {
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+            t.Tick += (s, e) =>
+            {
+                t.Stop();
+                var m = st.Mods.FirstOrDefault(x => x.Group != null) ?? st.Mods.First();
+                selectedId = m.Id;
+                RevealSelected();
+                RenderList();
+                UpdateLayout();
+                var menu = Menu(m);
+                menu.PlacementTarget = GroupScroll;
+                menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Relative;
+                menu.HorizontalOffset = 120;
+                menu.VerticalOffset = 40;
+                menu.IsOpen = true;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    var move = menu.Items.OfType<MenuItem>().First(x => (x.Header as string) == Texts.Get("g_move_to"));
+                    move.IsSubmenuOpen = true;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        var inner = move.Items.OfType<MenuItem>().FirstOrDefault(x => x.Items.Count > 0);
+                        if (inner != null) inner.IsSubmenuOpen = true;
+                    }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             };
             t.Start();
         }
