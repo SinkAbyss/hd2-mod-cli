@@ -144,7 +144,11 @@ namespace QuickDeploy
             var under = st.Groups.ToDictionary(g => g.Id, g => new List<ModRow>());
             foreach (var m in shown)
                 foreach (var g in PathTo(m.Group)) under[g.Id].Add(m);
-            bool Visible(GroupRow g) => !narrowed || under[g.Id].Count > 0;
+            // a group hides only when it has mods and the filter passes none of them: an empty one,
+            // a group just made among them, always shows (a remembered filter such as labels left
+            // out hid them all, the user, 2026-10-27)
+            var holding = new HashSet<string>(st.Mods.Where(InScope).SelectMany(m => PathTo(m.Group)).Select(g => g.Id));
+            bool Visible(GroupRow g) => !narrowed || under[g.Id].Count > 0 || !holding.Contains(g.Id);
 
             if (openWhenMade != null)
             {
@@ -234,7 +238,7 @@ namespace QuickDeploy
                 });
             foreach (var g in groups) list.Children.Add(FolderItem(g, index, active, under[g.Id]));
             foreach (var m in mods) list.Children.Add(ModItem(m, index, active));
-            if (!narrowed && (parent == null || LevelOf(parent) < Groups.Depth))
+            if (parent == null || LevelOf(parent) < Groups.Depth)
             {
                 var add = new Button { Template = Plain(), Cursor = Cursors.Hand, FocusVisualStyle = null, HorizontalContentAlignment = HorizontalAlignment.Left };
                 add.Content = new TextBlock { Text = Texts.Get("g_new"), FontSize = 13, Foreground = B("Muted"), Margin = new Thickness(14, 10, 14, 10) };
@@ -625,7 +629,8 @@ namespace QuickDeploy
             List<(bool Group, string Id)> Items(string parent)
             {
                 var narrowed = shown.Count < st.Mods.Count(InScope);
-                var gs = st.Groups.Where(g => g.Parent == parent && (!narrowed || shown.Any(m => m.Group != null && PathTo(m.Group).Any(x => x.Id == g.Id))));
+                bool Holds(IEnumerable<ModRow> ms, string id) => ms.Any(m => m.Group != null && PathTo(m.Group).Any(x => x.Id == id));
+                var gs = st.Groups.Where(g => g.Parent == parent && (!narrowed || Holds(shown, g.Id) || !Holds(st.Mods.Where(InScope), g.Id)));
                 return gs.Select(g => (true, g.Id)).Concat(shown.Where(m => m.Group == parent).Select(m => (false, m.Id))).ToList();
             }
             int i = Math.Min(groupCol, groupPath.Count);
