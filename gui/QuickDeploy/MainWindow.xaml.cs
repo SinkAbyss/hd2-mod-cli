@@ -319,6 +319,9 @@ namespace QuickDeploy
                 t16.Tick += (s, e) =>
                 {
                     t16.Stop();
+                    if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal;
+                    Height = 640;           // a short library still has more than a page to jump over
+                    UpdateLayout();
                     ListScroll.ScrollToTop();
                     UpdateLayout();
                     var row = List.Children.Count > 2 ? List.Children[2] as UIElement : List;
@@ -329,11 +332,20 @@ namespace QuickDeploy
                         row.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, at + 40 * n, -120) { RoutedEvent = UIElement.PreviewMouseWheelEvent });
                         if (++n < 6) return;
                         turn.Stop();
+                        // then two turns on the button itself: the list still moves (the user, 2026-10-27).
+                        // A library too short to call it up gets it shown here, for that turn alone
+                        bool came = flingBtn != null;
+                        if (!came) { ListScroll.ScrollToTop(); UpdateLayout(); ShowFling(-1, new Point(200, 120)); UpdateLayout(); }
+                        double before = ListScroll.VerticalOffset;
+                        var onBtn = (flingBtn?.Child as Panel)?.Children.OfType<TextBlock>().FirstOrDefault();
+                        for (int k = 0; k < 2 && onBtn != null; k++)
+                            onBtn.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, at + 40 * (n + k), -120) { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+                        UpdateLayout();
                         var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
                         if (path != null)
-                            File.WriteAllText(path, "shown " + (flingBtn != null) + "\ndir " + flingDir +
+                            File.WriteAllText(path, "shown " + came + "\ndir " + flingDir +
                                               "\nat " + (flingBtn == null ? "-" : Canvas.GetLeft(flingBtn) + "," + Canvas.GetTop(flingBtn)) +
-                                              "\noffset " + ListScroll.VerticalOffset + "\n");
+                                              "\noffset " + before + "\nafter_button " + ListScroll.VerticalOffset + "\n");
                     };
                     turn.Start();
                 };
@@ -1410,6 +1422,7 @@ namespace QuickDeploy
                 case "group_exists": Dialog.Tell(this, Texts.F("g_exists", r.Refused.Arg)); break;
                 case "group_depth": Dialog.Tell(this, Texts.Get("g_depth")); break;
                 case "group_inside": Dialog.Tell(this, Texts.Get("g_inside")); break;
+                case "pick_one": Dialog.Tell(this, Texts.F("pick_one", r.Refused.Arg)); break;
                 default: Dialog.Tell(this, Texts.F("failed", r.Message)); break;
             }
             return false;
@@ -4073,7 +4086,7 @@ namespace QuickDeploy
         }
 
         /// <summary>An open mod's options, as the board's cards: a manifest option with
-        /// sub-options is a group (pick one; Ctrl+click for more), the options without
+        /// sub-options is a group (pick one), the options without
         /// any are one group of parts that can each be on or off.</summary>
         UIElement Options(ModRow m)
         {
@@ -4113,10 +4126,9 @@ namespace QuickDeploy
                     string sref = (i + 1) + "." + (j + 1);
                     cards.Children.Add(Card(sub.Name, sub.Icon, sub.Files, sub.Bytes, sub.Enabled, sub.Description, () =>
                     {
+                        // one of a kind: the sub-options replace the same resources (the user, 2026-10-27)
                         bool was = sub.Enabled;
-                        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
-                            Change(m.Id, c => c.Options[oi].Subs[sj].Enabled = !was, "set", m.Id, sref, was ? "off" : "on");
-                        else if (!was)
+                        if (!was)
                             Change(m.Id, c => { for (int k = 0; k < c.Options[oi].Subs.Count; k++) c.Options[oi].Subs[k].Enabled = k == sj; },
                                    "set", m.Id, sref, "on", "--only");
                     }));
@@ -5286,6 +5298,9 @@ namespace QuickDeploy
             if (e.Handled || e.Delta == 0 || Keyboard.Modifiers != ModifierKeys.None) return;
             var from = e.OriginalSource as DependencyObject;
             var scrolls = Scrolls(from).ToList();
+            // the jump button floats over the list, outside its scroll: a wheel on it turns the
+            // list still (the user, 2026-10-27: the wheel stopped with the pointer on the button)
+            if (flingLayer != null && from is Visual v && flingLayer.IsAncestorOf(v)) scrolls = Scrolls(List).ToList();
             bool fresh = unchecked(e.Timestamp - wheelLast) > WheelRestMs || wheelTarget == null ||
                          !wheelTarget.IsVisible || !scrolls.Contains(wheelTarget);
             wheelLast = e.Timestamp;

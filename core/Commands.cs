@@ -113,7 +113,7 @@ namespace Hd2Mod
                                    Flags = new[] { "--top", "--bottom" }, Values = new[] { "--to", "--before", "--after" },
                                    OneOf = new[] { "--top", "--bottom", "--to", "--before", "--after" }, Run = Move }),
             Cmd("options", new Spec { Help = "a mod's options and sub-options", Positionals = new[] { "mod" }, Run = Options }),
-            Cmd("set", new Spec { Help = "turn an option or sub-option on or off: OPTION, OPTION/SUB, or 2.3",
+            Cmd("set", new Spec { Help = "turn an option on or off, or pick one of its sub-options (one at a time): OPTION, OPTION/SUB, or 2.3",
                                   Positionals = new[] { "mod", "option", "value" }, Flags = new[] { "--only" }, Run = Set }),
             Cmd("profiles", new Spec { Help = "the profiles: each its own mods, load order, on/off and options; * marks the one in use", Run = ProfilesCmd }),
             Cmd("profiles-on", new Spec { Help = "turn profiles on: the first time, a profile Default of every mod", Run = (a, o) => Profiling(o, true) }),
@@ -1101,9 +1101,14 @@ namespace Hd2Mod
             var chosen = Manifest.Merged(Manifest.Of(mod), mod.Options);
             var (opt, sub) = Ops.OptionAt(chosen, a.Pos["option"]);
             bool value = a.Pos["value"] == "on";
+            // a sub-option is one of a kind: they replace the same static resources, so one is
+            // chosen and choosing another drops it (the user, 2026-10-27). --only is what "on"
+            // always does now, and is still taken
             if (sub == null) opt.Enabled = value;
-            else if (a.Flag("--only")) foreach (var x in opt.Subs) x.Enabled = x == sub;
-            else sub.Enabled = value;
+            else if (value) foreach (var x in opt.Subs) x.Enabled = x == sub;
+            else if (sub.Enabled && opt.Subs.Count(x => x.Enabled) == 1)
+                throw new ModError(opt.Name + " keeps one choice: pick another, or turn " + opt.Name + " off", "pick_one", opt.Name);
+            else sub.Enabled = false;
             mod.Options = chosen;
             lib.Save();
             PrintOptions(Ops.Pick(Library.Load(), a.Pos["mod"]), o);

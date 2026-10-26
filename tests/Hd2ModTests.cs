@@ -140,6 +140,13 @@ namespace Hd2Mod.Tests
             return o.ToString();
         }
 
+        /// <summary>The kind of a refusal, for the window's own words.</summary>
+        protected static string Refused(params string[] args)
+        {
+            Assert.Equal(1, Commands.Run(args, new StringWriter(), new StringWriter(), out var refused));
+            return refused?.Kind;
+        }
+
         protected List<string> Deployed()
         {
             var l = Directory.EnumerateFiles(Data).Select(Path.GetFileName).Where(f => Deploy.Managed.IsMatch(f)).ToList();
@@ -191,6 +198,18 @@ namespace Hd2Mod.Tests
             var plan = PlanBodies();
             Assert.Equal("two-sub2", plan[A + ".patch_2"]);
             Assert.Equal("two-sub2b", plan[A + ".patch_3"]);
+            // one sub-option at a time: they replace the same resources (the user, 2026-10-27)
+            Cli("set", "Two", "Base/S1", "on");
+            Assert.Equal("two-sub1", PlanBodies()[A + ".patch_2"]);
+            Assert.Equal(1, Library.Load().Mods[1].Options[0].Subs.Count(x => x.Enabled));
+            Assert.Equal("pick_one", Refused("set", "Two", "Base/S1", "off"));   // the one chosen stays until another is
+            Cli("set", "Two", "Base/S2", "off");                                  // one not chosen: nothing to do
+            // several chosen by an older window: the first counts
+            var lib = Library.Load();
+            foreach (var x in lib.Mods[1].Options[0].Subs) x.Enabled = true;
+            lib.Save();
+            Assert.Equal("two-sub1", PlanBodies()[A + ".patch_2"]);
+            Assert.DoesNotContain("two-sub2", PlanBodies().Values);
             Cli("set", "Two", "Base", "off");
             Assert.DoesNotContain(A + ".patch_2", Deploy.Plan(Library.Load()).Select(w => w.Name));
         }
@@ -1817,12 +1836,6 @@ namespace Hd2Mod.Tests
             Assert.Contains("Z/", Cli("groups"));
         }
 
-        /// <summary>The kind of a refusal, for the window's own words.</summary>
-        static string Refused(params string[] args)
-        {
-            Assert.Equal(1, Commands.Run(args, new StringWriter(), new StringWriter(), out var refused));
-            return refused?.Kind;
-        }
 
         /// <summary>A mod packs its picture under whatever name the author chose, and Arsenal shows
         /// it; so does this (the user's tester, 2026-10-25).</summary>

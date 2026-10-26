@@ -414,6 +414,10 @@ namespace Hd2Mod
                 foreach (var x in s.Subs) subs[x.Name] = x.Enabled;
                 if (d.Subs.Any(x => subs.ContainsKey(x.Name)))
                     foreach (var x in d.Subs) x.Enabled = subs.TryGetValue(x.Name, out var on) && on;
+                // one sub-option at most: they replace the same resources (the user, 2026-10-27);
+                // a choice of several, saved by an older window's Ctrl+click, keeps its first
+                bool first = true;
+                foreach (var x in d.Subs.Where(x => x.Enabled)) { if (!first) x.Enabled = false; first = false; }
             }
             return out_;
         }
