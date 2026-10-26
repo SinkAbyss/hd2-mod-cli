@@ -3863,7 +3863,10 @@ namespace QuickDeploy
         /// the mods taken; with Shift every row from the one shown down to it is taken.</summary>
         void Take(ModRow m)
         {
-            var mods = Seen().ToList();
+            // in the groups, the column the mod is in, in its order: Shift took the load order's
+            // range, mods of other groups out of sight among them, and a drag moved them all
+            // (the user, 2026-10-27)
+            var mods = groupView ? GroupShown().Where(x => x.Group == m.Group).ToList() : Seen().ToList();
             var keys = Keyboard.Modifiers;
             if ((keys & ModifierKeys.Shift) != 0 && selectedId != null)
             {
@@ -3878,7 +3881,7 @@ namespace QuickDeploy
             {
                 if (!picked.Remove(m.Id))
                 {
-                    if (picked.Count == 0 && selectedId != null) picked.Add(selectedId);
+                    if (picked.Count == 0 && selectedId != null && mods.Any(x => x.Id == selectedId)) picked.Add(selectedId);
                     picked.Add(m.Id);
                     selectedId = m.Id;
                 }
@@ -3906,8 +3909,16 @@ namespace QuickDeploy
         }
 
         /// <summary>The mods taken together, in load order, when this one is among them.</summary>
-        List<ModRow> Taken(ModRow m) =>
-            picked.Count > 1 && picked.Contains(m.Id) ? st.Mods.Where(x => picked.Contains(x.Id)).ToList() : new List<ModRow> { m };
+        /// <summary>The mods an action on m acts on: the ones taken with it, else m alone. In the
+        /// groups only those of m's own column, and shown: a drag must never move mods out of
+        /// sight (the user, 2026-10-27: other groups' mods were moved into the one dropped on).</summary>
+        List<ModRow> Taken(ModRow m)
+        {
+            if (picked.Count <= 1 || !picked.Contains(m.Id)) return new List<ModRow> { m };
+            var taken = st.Mods.Where(x => picked.Contains(x.Id));
+            if (groupView) taken = taken.Where(x => x.Group == m.Group && Shown(x));
+            return taken.ToList();
+        }
 
         void ClearDrop()
         {

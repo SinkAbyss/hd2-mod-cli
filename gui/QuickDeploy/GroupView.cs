@@ -174,6 +174,9 @@ namespace QuickDeploy
                 if (g == null || g.Parent != (i == 0 ? null : groupPath[i - 1]) || !Visible(g)) { groupPath.RemoveRange(i, groupPath.Count - i); break; }
             }
             groupCol = Math.Min(groupCol, groupPath.Count);
+            // mods taken together live in the last column, the one whose mods can be chosen
+            string here = groupPath.Count == 0 ? null : groupPath[groupPath.Count - 1];
+            picked.RemoveWhere(id => !shown.Any(m => m.Id == id && m.Group == here));
 
             // where each column was scrolled to, kept through the redraw: a click redraws them all
             // and every list went back to its top (the user, 2026-10-27)
@@ -251,6 +254,7 @@ namespace QuickDeploy
                 if (e.Handled || gDragging) return;
                 groupPath.RemoveRange(index, groupPath.Count - index);
                 selectedId = null;
+                picked.Clear();
                 groupCol = index;
                 RenderGroups();
                 RenderDetail();
@@ -341,6 +345,7 @@ namespace QuickDeploy
                 groupPath.RemoveRange(index, groupPath.Count - index);
                 groupPath.Add(g.Id);
                 selectedId = null;
+                picked.Clear();
                 groupCol = index;
                 RenderGroups();
                 RenderDetail();
@@ -751,6 +756,7 @@ namespace QuickDeploy
         {
             var which = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST");
             if (which == "groupdrag") { GroupDragTest(); return; }
+            if (which == "groupdragtaken") { GroupDragTakenTest(); return; }
             if (which == "groupmenu") { GroupMenuTest(); return; }
             if (which != "groups") return;
             var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
@@ -846,6 +852,50 @@ namespace QuickDeploy
                     check.Stop();
                     var now = st.Mods.First(m => m.Id == mod.Id);
                     log.AppendLine("mod " + mod.Name + " group " + (now.Group == null ? "-" : st.Groups.First(g => g.Id == now.Group).Name));
+                    if (path != null) System.IO.File.WriteAllText(path, log.ToString());
+                };
+                check.Start();
+            };
+            t.Start();
+        }
+
+        /// <summary>HD2QD_CLICK_TEST=groupdragtaken: every mod taken (as a Shift range over the load
+        /// order left them), a group opened, its first mod dragged onto a folder of the top column;
+        /// then every mod's group, to HD2QD_WHEEL_OUT. Only the opened group's mods may move.</summary>
+        void GroupDragTakenTest()
+        {
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+            t.Tick += (s, e) =>
+            {
+                t.Stop();
+                var log = new System.Text.StringBuilder();
+                string Where(string id) => id == null ? "-" : string.Join("/", PathTo(id).Select(g => g.Name));
+                foreach (var m in st.Mods) log.AppendLine("before " + m.Name + " : " + Where(m.Group));
+                var open = st.Groups.First(g => g.Parent == null && st.Mods.Count(m => m.Group == g.Id) >= 2);
+                groupView = true;
+                groupPath.Clear();
+                groupPath.Add(open.Id);
+                foreach (var m in st.Mods) picked.Add(m.Id);
+                var mod = GroupShown().First(m => m.Group == open.Id);
+                selectedId = mod.Id;
+                RenderList();
+                UpdateLayout();
+                log.AppendLine("taken after opening " + open.Name + ": " + string.Join("; ", Taken(mod).Select(m => m.Name)));
+                var cols = GroupCols.Children.OfType<Border>().ToList();
+                var folder = ((StackPanel)((ScrollViewer)cols[0].Child).Content).Children.OfType<Border>()
+                    .First(b => b.Tag is GroupDrop d && d.Group != open.Id);
+                var item = ((StackPanel)((ScrollViewer)cols[1].Child).Content).Children.OfType<Border>().First(b => b.Tag == null);
+                gDragFrom = ("mod", mod.Id, mod.Name, item.TranslatePoint(new Point(20, 20), GroupScroll));
+                StartGroupDrag();
+                DragTo(folder.TranslatePoint(new Point(60, 20), GroupScroll), folder.TranslatePoint(new Point(60, 20), DragLayer));
+                log.AppendLine("onto " + Where(((GroupDrop)folder.Tag).Group));
+                FinishGroupDrag();
+                var check = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                check.Tick += (s2, e2) =>
+                {
+                    check.Stop();
+                    foreach (var m in st.Mods) log.AppendLine("after " + m.Name + " : " + Where(m.Group));
+                    var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
                     if (path != null) System.IO.File.WriteAllText(path, log.ToString());
                 };
                 check.Start();
