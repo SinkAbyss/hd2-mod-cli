@@ -39,6 +39,8 @@ namespace Hd2Mod
         public SiteInfo Site;
         /// <summary>The player's own labels for this mod, in the order they were given.</summary>
         public List<string> Tags = new List<string>();
+        /// <summary>The group the player put it in (Groups), else null: shown only, nothing moves.</summary>
+        public string Group;
         /// <summary>The mod's options as the manager it came from describes them, for a folder
         /// with no manifest.json of its own: Echelon keeps its copy as numbered set folders, so
         /// the options only exist in its list (the user, 2026-10-24).</summary>
@@ -74,6 +76,8 @@ namespace Hd2Mod
         /// <summary>The player's labels, kept whether or not a mod carries one: a label made
         /// before its mods are chosen has to outlive the window (the user, 2026-10-24).</summary>
         public List<string> Tags = new List<string>();
+        /// <summary>The player's groups, up to Groups.Depth levels, in the order they were made.</summary>
+        public List<ModGroup> Groups = new List<ModGroup>();
         public string ImportedFrom;
         /// <summary>Profiles (Profiles): whether they are on, the profiles, the one in use (whose
         /// order, on/off and options are the list's own), and its mods. Known is every mod id the
@@ -124,6 +128,7 @@ namespace Hd2Mod
                 if (gh != null) mod.GitHub = new GitHubRef { Owner = Json.Str(gh, "owner"), Repo = Json.Str(gh, "repo"), Tag = Json.Str(gh, "tag") };
                 mod.Page = Json.Str(m, "page");
                 foreach (var t in Json.List(m, "tags")) if (t is string tag && tag.Trim().Length > 0) mod.Tags.Add(tag.Trim());
+                mod.Group = Json.Str(m, "group");
                 mod.Description = Json.Str(m, "description");
                 foreach (var o in Json.List(m, "layout").OfType<Dictionary<string, object>>())
                     mod.Layout.Add(new ManifestOption
@@ -146,6 +151,9 @@ namespace Hd2Mod
                 };
                 lib.Mods.Add(mod);
             }
+            foreach (var g in Json.List(d, "groups").OfType<Dictionary<string, object>>())
+                lib.Groups.Add(new ModGroup { Id = Json.Str(g, "id"), Name = (Json.Str(g, "name") ?? "").Trim(), Parent = Json.Str(g, "parent") });
+            Hd2Mod.Groups.Tidy(lib);
             var was = Json.List(d, "known").OfType<string>().ToList();
             lib.known = new HashSet<string>(was.Count > 0 ? was : lib.Mods.Select(m => m.Id));
             return lib;
@@ -182,6 +190,7 @@ namespace Hd2Mod
                 if (m.GitHub != null) entry["github"] = new Dictionary<string, object> { ["owner"] = m.GitHub.Owner, ["repo"] = m.GitHub.Repo, ["tag"] = m.GitHub.Tag };
                 if (m.RealName != null) entry["real_name"] = m.RealName;
                 if (m.Tags.Count > 0) entry["tags"] = m.Tags.Cast<object>().ToList();
+                if (m.Group != null) entry["group"] = m.Group;
                 if (!string.IsNullOrEmpty(m.Description)) entry["description"] = m.Description;
                 Dictionary<string, object> Option(ManifestOption o)
                 {
@@ -212,6 +221,13 @@ namespace Hd2Mod
                 foreach (var t in m.Tags)
                     if (!labels.Any(x => string.Equals(x, t, StringComparison.CurrentCultureIgnoreCase))) labels.Add(t);
             if (labels.Count > 0) d["tags"] = labels.Cast<object>().ToList();
+            if (Groups.Count > 0)
+                d["groups"] = Groups.Select(g =>
+                {
+                    var x = new Dictionary<string, object> { ["id"] = g.Id, ["name"] = g.Name };
+                    if (g.Parent != null) x["parent"] = g.Parent;
+                    return (object)x;
+                }).ToList();
             if (ImportedFrom != null) d["imported_from"] = ImportedFrom;
             if (Profiles.Count > 0)
             {

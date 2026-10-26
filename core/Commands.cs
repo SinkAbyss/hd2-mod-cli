@@ -80,6 +80,17 @@ namespace Hd2Mod
             Cmd("tag-new", new Spec { Help = "make a label, before any mod carries it", Positionals = new[] { "name" }, Run = TagNew }),
             Cmd("tag-rename", new Spec { Help = "rename a label everywhere it is used", Positionals = new[] { "name", "to" }, Run = TagRename }),
             Cmd("tag-delete", new Spec { Help = "take a label off every mod", Positionals = new[] { "name" }, Run = TagDelete }),
+            Cmd("groups", new Spec { Help = "the player's groups, up to " + Groups.Depth + " levels, with their mods (shown only: no file moves, the deploy is the same)", Run = GroupList }),
+            Cmd("group-new", new Spec { Help = "make a group, at the top or --in another (a group is a name or a path such as Looks/Armour)",
+                                        Positionals = new[] { "name" }, Values = new[] { "--in" }, Run = GroupNew }),
+            Cmd("group-rename", new Spec { Help = "rename a group", Positionals = new[] { "group", "name" }, Run = GroupRename }),
+            Cmd("group-move", new Spec { Help = "move a group, with what it holds, --in another or to the --top",
+                                         Positionals = new[] { "group" }, Values = new[] { "--in" }, Flags = new[] { "--top" },
+                                         OneOf = new[] { "--in", "--top" }, Run = GroupMove }),
+            Cmd("group-delete", new Spec { Help = "delete a group: its mods and groups go up into the group around it", Positionals = new[] { "group" }, Run = GroupDelete }),
+            Cmd("group-put", new Spec { Help = "put mods --in a group, or back to the --top (no group)",
+                                        Positionals = new[] { "mods" }, Many = true, Values = new[] { "--in" }, Flags = new[] { "--top" },
+                                        OneOf = new[] { "--in", "--top" }, Run = GroupPut }),
 #if HAS_NEXUS
             Cmd("nexus", new Spec { Help = "download a Nexus Mods link (nxm://...) and put it in the library (a mod from it already there gets the new version)",
                                     Positionals = new[] { "link" }, Run = NexusCmd }),
@@ -176,7 +187,7 @@ namespace Hd2Mod
         /// record or the game folder.</summary>
         static readonly HashSet<string> ReadOnly = new HashSet<string>
         {
-            "folders", "list", "tags", "status", "check", "which", "state", "conflicts", "profiles",
+            "folders", "list", "tags", "groups", "status", "check", "which", "state", "conflicts", "profiles",
         };
 
         static bool Writes(string command, Args a) =>
@@ -729,6 +740,79 @@ namespace Hd2Mod
             lib.Tags.RemoveAll(t => string.Equals(t, name, StringComparison.OrdinalIgnoreCase));
             lib.Save();
             o.WriteLine("took the label off " + n + " mods: " + name);
+        }
+
+        // ---------------------------------------------------------------- groups (Groups)
+
+        static void GroupList(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            void Show(string parent, int depth)
+            {
+                foreach (var g in lib.Groups.Where(g => g.Parent == parent))
+                {
+                    int n = lib.Mods.Count(m => m.Group != null && (m.Group == g.Id || Groups.Inside(lib, m.Group, g.Id)));
+                    o.WriteLine(new string(' ', depth * 2) + g.Name + "/  (" + n + (n == 1 ? " mod" : " mods") + ")");
+                    Show(g.Id, depth + 1);
+                    foreach (var m in lib.Mods.Where(m => m.Group == g.Id)) o.WriteLine(new string(' ', depth * 2 + 2) + m.Name);
+                }
+            }
+            Show(null, 0);
+            var loose = lib.Mods.Where(m => m.Group == null).ToList();
+            if (lib.Groups.Count == 0) o.WriteLine("no groups yet");
+            else if (loose.Count > 0) o.WriteLine("in no group: " + string.Join("; ", loose.Select(m => m.Name)));
+        }
+
+        static void GroupNew(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var into = a.Value("--in") != null ? Groups.Pick(lib, a.Value("--in")).Id : null;
+            var g = Groups.New(lib, a.Pos["name"], into);
+            lib.Save();
+            o.WriteLine("new group: " + Groups.PathText(lib, g.Id) + "  (" + g.Id + ")");
+        }
+
+        static void GroupRename(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var g = Groups.Pick(lib, a.Pos["group"]);
+            var was = Groups.PathText(lib, g.Id);
+            Groups.Rename(lib, g, a.Pos["name"]);
+            lib.Save();
+            o.WriteLine("renamed: " + was + " -> " + Groups.PathText(lib, g.Id));
+        }
+
+        static void GroupMove(Args a, TextWriter o)
+        {
+            if (a.Value("--in") == null && !a.Flag("--top")) throw new ModError("say where: --in a group, or --top");
+            var lib = Library.Load();
+            var g = Groups.Pick(lib, a.Pos["group"]);
+            Groups.Move(lib, g, a.Flag("--top") ? null : Groups.Pick(lib, a.Value("--in")).Id);
+            lib.Save();
+            o.WriteLine("moved: " + Groups.PathText(lib, g.Id));
+        }
+
+        static void GroupDelete(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var g = Groups.Pick(lib, a.Pos["group"]);
+            var was = Groups.PathText(lib, g.Id);
+            var up = g.Parent != null ? Groups.PathText(lib, g.Parent) : null;
+            Groups.Delete(lib, g);
+            lib.Save();
+            o.WriteLine("deleted the group " + was + "; what it held is now " + (up != null ? "in " + up : "at the top"));
+        }
+
+        /// <summary>Mods into a group: the window's drag onto a folder. Nothing moves on disk.</summary>
+        static void GroupPut(Args a, TextWriter o)
+        {
+            if (a.Value("--in") == null && !a.Flag("--top")) throw new ModError("say where: --in a group, or --top");
+            var lib = Library.Load();
+            var to = a.Flag("--top") ? null : Groups.Pick(lib, a.Value("--in"));
+            var mods = a.Rest.Select(r => Ops.Pick(lib, r)).Distinct().ToList();
+            foreach (var m in mods) m.Group = to?.Id;
+            lib.Save();
+            o.WriteLine((to != null ? Groups.PathText(lib, to.Id) : "no group") + ": " + string.Join("; ", mods.Select(m => m.Name)));
         }
 
         static void Remove(Args a, TextWriter o)

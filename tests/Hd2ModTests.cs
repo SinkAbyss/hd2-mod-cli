@@ -1743,6 +1743,87 @@ namespace Hd2Mod.Tests
             CliCode(1, "tag-many", "armour");   // a label with no mod behind it is refused
         }
 
+        /// <summary>A group is only a name in the library (the user, 2026-10-27): putting mods in
+        /// groups moves no folder and changes nothing a deploy would do.</summary>
+        [Fact]
+        public void GroupsAreShownOnlyNothingMoves()
+        {
+            var one = Mod("One", Files((A + ".patch_0", "one")));
+            var two = Mod("Two", Files((B + ".patch_0", "two")));
+            Cli("add", one);
+            Cli("add", two);
+            Cli("deploy");
+            var before = Deployed();
+            Cli("group-new", "Looks");
+            Cli("group-new", "Armour", "--in", "Looks");
+            Cli("group-put", "One", "Two", "--in", "Looks/Armour");
+            Assert.True(Directory.Exists(one) && Directory.Exists(two));       // the folders stay where they are
+            Assert.Contains("move 0, write 0, delete 0", Cli("status"));
+            Assert.Equal(before, Deployed());
+            var lib = Library.Load();
+            Assert.Equal("Looks/Armour", Groups.PathText(lib, lib.Mods[0].Group));
+            Assert.Contains("Armour/  (2 mods)", Cli("groups"));
+            Assert.Contains("\"group\"", Cli("state"));
+            Cli("group-put", "One", "--top");
+            Assert.Null(Library.Load().Mods[0].Group);
+        }
+
+        /// <summary>The groups' rules: three levels at most, no group inside itself, no two of one
+        /// name side by side; deleting one hands what it held to the group around it.</summary>
+        [Fact]
+        public void GroupsKeepTheirRules()
+        {
+            Cli("add", Mod("One", Files((A + ".patch_0", "one"))));
+            Cli("group-new", "A");
+            Cli("group-new", "B", "--in", "A");
+            Cli("group-new", "C", "--in", "A/B");
+            Assert.Equal("group_depth", Refused("group-new", "D", "--in", "A/B/C"));
+            Assert.Equal("group_exists", Refused("group-new", "b", "--in", "A"));
+            Assert.Equal("group_inside", Refused("group-move", "A", "--in", "A/B"));
+            Cli("group-new", "Other");
+            Assert.Equal("group_depth", Refused("group-move", "A", "--in", "Other"));    // A holds two levels
+            Cli("group-new", "B", "--in", "Other");
+            Assert.Equal("group_ambiguous", Refused("group-put", "One", "--in", "B"));  // two groups named B: the path tells them apart
+            Cli("group-put", "One", "--in", "A/B/C");
+            Cli("group-delete", "A/B");
+            var lib = Library.Load();
+            Assert.Equal("A/C", Groups.PathText(lib, Groups.Pick(lib, "C").Id));     // C came up into A
+            Assert.Equal("A/C", Groups.PathText(lib, lib.Mods[0].Group));
+            Cli("group-rename", "A/C", "Kept");
+            Assert.Equal("A/Kept", Groups.PathText(Library.Load(), Library.Load().Mods[0].Group));
+            CliCode(1, "group-move", "Other");                                          // --in or --top
+        }
+
+        /// <summary>A library.json written by hand or by an older build: a group under one that is
+        /// gone, a loop, or a mod in a missing group come back to the top, not as an error.</summary>
+        [Fact]
+        public void BrokenGroupsGoToTheTop()
+        {
+            Cli("add", Mod("One", Files((A + ".patch_0", "one"))));
+            var path = Path.Combine(Store.Home, "library.json");
+            var d = (Dictionary<string, object>)Json.Parse(File.ReadAllText(path));
+            d["groups"] = new List<object>
+            {
+                new Dictionary<string, object> { ["id"] = "x", ["name"] = "X", ["parent"] = "y" },
+                new Dictionary<string, object> { ["id"] = "y", ["name"] = "Y", ["parent"] = "x" },
+                new Dictionary<string, object> { ["id"] = "z", ["name"] = "Z", ["parent"] = "gone" },
+            };
+            ((Dictionary<string, object>)((List<object>)d["mods"])[0])["group"] = "missing";
+            File.WriteAllText(path, Json.Write(d));
+            var lib = Library.Load();
+            Assert.All(lib.Groups, g => Assert.True(Groups.Level(lib, g.Id) <= Groups.Depth));
+            Assert.Null(Groups.Of(lib, "z").Parent);
+            Assert.Null(lib.Mods[0].Group);
+            Assert.Contains("Z/", Cli("groups"));
+        }
+
+        /// <summary>The kind of a refusal, for the window's own words.</summary>
+        static string Refused(params string[] args)
+        {
+            Assert.Equal(1, Commands.Run(args, new StringWriter(), new StringWriter(), out var refused));
+            return refused?.Kind;
+        }
+
         /// <summary>A mod packs its picture under whatever name the author chose, and Arsenal shows
         /// it; so does this (the user's tester, 2026-10-25).</summary>
         [Fact]

@@ -389,7 +389,7 @@ namespace Hd2Mod
                     ["channel"] = Origins.Of(m).Channel, ["page"] = Origins.Of(m).Page, ["version"] = m.Nexus?.Version ?? m.GitHub?.Tag,
                     ["shown_version"] = Origins.VersionOf(m).Version, ["version_from"] = Origins.VersionOf(m).From,
                     ["site_author"] = m.Site?.Author, ["site_summary"] = m.Site?.Summary, ["site_version"] = m.Site?.Version,
-                    ["tags"] = m.Tags.Cast<object>().ToList(),
+                    ["tags"] = m.Tags.Cast<object>().ToList(), ["group"] = m.Group,
                     ["auto_tags"] = (manifest?.Tags ?? new List<string>()).Cast<object>().ToList(),
                     ["error"] = error,
                 });
@@ -403,6 +403,8 @@ namespace Hd2Mod
                 ["summary"] = summary, ["links"] = links, ["saved_bytes"] = Json.Long(record, "saved_bytes"),
                 ["deploys"] = Json.Long(record, "deploys"), ["deletes"] = deletes.Cast<object>().ToList(),
                 ["mods"] = mods, ["conflicts"] = clashes, ["resource_names"] = ResourceNames.HaveNames, ["tags"] = lib.Tags.Cast<object>().ToList(),
+                // the player's groups (Groups): shown only, in the order they were made
+                ["groups"] = lib.Groups.Select(g => (object)new Dictionary<string, object> { ["id"] = g.Id, ["name"] = g.Name, ["parent"] = g.Parent }).ToList(),
                 ["lua_check"] = luaCheck,
                 // profiles: whether they are on, the one in use, all of them (Profiles)
                 ["profiles_on"] = lib.ProfilesOn, ["profile"] = lib.ProfilesOn ? lib.Active : null,

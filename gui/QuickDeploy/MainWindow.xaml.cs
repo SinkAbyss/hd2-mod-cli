@@ -134,7 +134,9 @@ namespace QuickDeploy
             JumpButtons();
             DeployBtn.Content = Texts.Get("deploy");
             LaunchBtn.Content = Texts.Get("launch");
-            ListHint.Text = Texts.Get(Texts.TopWins ? "list_hint_top" : "list_hint");
+            ListHint.Text = Texts.Get(groupView ? "g_hint" : Texts.TopWins ? "list_hint_top" : "list_hint");
+            ViewGroups.Content = Texts.Get("view_groups");
+            ViewOrder.Content = Texts.Get("view_order");
             PageDeploy.Content = Texts.Get("page_deploy");
             PageDownload.Content = Texts.Get("page_download");
             PageStorage.Content = Texts.Get("page_storage");
@@ -179,6 +181,8 @@ namespace QuickDeploy
         void Start()
         {
             Mark("window loaded");
+            LoadView();
+            HookGroupDrag();
             LuaMods.Lazy = true;                       // the list first; the mods' scripts after (WarmLua)
             Watch();
             LoadFilters();
@@ -1403,6 +1407,9 @@ namespace QuickDeploy
                 case "nexus_busy": Dialog.Tell(this, Texts.Get("nx_busy")); break;
 #endif
                 case "not_zip": Dialog.Tell(this, Texts.F("nx_not_zip", r.Refused.Arg)); break;
+                case "group_exists": Dialog.Tell(this, Texts.F("g_exists", r.Refused.Arg)); break;
+                case "group_depth": Dialog.Tell(this, Texts.Get("g_depth")); break;
+                case "group_inside": Dialog.Tell(this, Texts.Get("g_inside")); break;
                 default: Dialog.Tell(this, Texts.F("failed", r.Message)); break;
             }
             return false;
@@ -2142,6 +2149,7 @@ namespace QuickDeploy
                 {
                     selectedId = first.Id;
                     open.Add(first.Id);
+                    if (groupView) RevealSelected();
                     // scrolled to, once the list is laid out
                     Dispatcher.BeginInvoke(new Action(() => { if (rows.TryGetValue(first.Id, out var r)) r.Row.BringIntoView(); }), DispatcherPriority.Loaded);
                 }
@@ -2149,8 +2157,9 @@ namespace QuickDeploy
             }
             // the chosen mod stays while it is in the list; else the first the list shows
             WhereItWas();
-            if (!st.Mods.Any(m => m.Id == selectedId && (searchWords.Length == 0 || Shown(m))))
-                selectedId = (Seen().FirstOrDefault() ?? st.Mods.FirstOrDefault())?.Id;
+            // in the groups a group may be chosen instead of a mod (GroupView)
+            if (!(groupView && selectedId == null && groupPath.Count > 0) && !st.Mods.Any(m => m.Id == selectedId && (searchWords.Length == 0 || Shown(m))))
+                selectedId = groupView ? null : (Seen().FirstOrDefault() ?? st.Mods.FirstOrDefault())?.Id;
             Mark("render: top");
             RenderNav();
             Mark("render: left list");
@@ -3538,6 +3547,9 @@ namespace QuickDeploy
                 ProfileBtn.Template = Plain();
                 ProfileBtn.Content = head;
             }
+            ShowView();
+            ListHint.Text = Texts.Get(groupView ? "g_hint" : Texts.TopWins ? "list_hint_top" : "list_hint");
+            if (groupView) { RenderGroups(); return; }
             // a row is built again only when what it shows changed; the others stay put
             var want = new List<UIElement>();
             var seen = new HashSet<string>();
@@ -4178,6 +4190,12 @@ namespace QuickDeploy
         {
             Detail.Children.Clear();
             var m = st?.Mods.FirstOrDefault(x => x.Id == selectedId);
+            if (m == null && st != null && groupView && groupPath.Count > 0)
+            {
+                var g = st.Groups.FirstOrDefault(x => x.Id == groupPath[groupPath.Count - 1]);
+                if (g != null) GroupDetail(g);
+                return;
+            }
             if (m == null) return;
 
             // the picture, the name and its files
@@ -4289,6 +4307,8 @@ namespace QuickDeploy
             else if (st.ProfilesOn && !m.InProfile) Fact("d_order", Texts.Get("pf_outside"));
             else Fact("d_order", Texts.F("d_order_v", Num(m), st.ProfilesOn ? st.Mods.Count(x => x.InProfile && !x.Loader) : st.Mods.Count(x => !x.Loader)), true);
             if (!m.Loader) Fact("d_opts", m.Options.Count > 0 ? m.Chosen + " / " + m.Choices : "—");
+            if (!m.Loader && st.Groups.Count > 0)
+                Fact("d_group", m.Group != null ? string.Join(" › ", PathTo(m.Group).Select(x => x.Name)) : Texts.Get("g_top"));
             Fact("d_folder", m.Path, true, true);
             {
                 // remove from the library, and open the folder. A row that does not fit wraps onto
@@ -4316,6 +4336,15 @@ namespace QuickDeploy
             }
             if (!string.IsNullOrEmpty(m.Source) && m.Source != m.Path) Fact("d_source", m.Source, true, true);
             Detail.Children.Add(facts);
+            // in the groups the rows do not open: a mod's options are here (the user, 2026-10-27)
+            if (groupView && m.Options.Count > 0 && Options(m) is FrameworkElement opts)
+            {
+                opts.Margin = new Thickness(0, 4, 0, 0);
+                var box = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
+                box.Children.Add(Label("d_opts", new Thickness(0, 0, 0, 2)));
+                box.Children.Add(opts);
+                Detail.Children.Add(box);
+            }
             // its scripts: what starts them, and whether they will run (the user, 2026-10-26);
             // before its updates, which matter less than whether it runs at all
             var luaCard = LuaCard(m);
