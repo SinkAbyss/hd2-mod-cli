@@ -25,6 +25,7 @@ namespace QuickDeploy
 
         void SpacePreview(object sender, KeyEventArgs e)
         {
+            if (e.Key == Key.Escape && preview != null && !e.Handled) { preview.Close(); e.Handled = true; return; }
             if (e.Key != Key.Space || e.Handled || Keyboard.Modifiers != ModifierKeys.None) return;
             if (Body.Visibility != Visibility.Visible || gDragging || dragRow != null || st == null) return;
             if (Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is PasswordBox) return;
@@ -64,6 +65,10 @@ namespace QuickDeploy
                     }
                 }
             };
+            // a click anywhere outside it closes it, the manager's own window too, as a menu does;
+            // with it open behind the window, Esc reached the window and left it open (the user, 2026-10-27)
+            // (after the deactivation is done: a window closing deactivates too, and closing it again then fails)
+            preview.Deactivated += (s, e) => Dispatcher.BeginInvoke(new Action(() => preview?.Close()));
             preview.Closed += (s, e) => { preview = null; previewOf = null; Activate(); };
             FillPreview();
             preview.Show();
@@ -162,9 +167,33 @@ namespace QuickDeploy
         /// start (--select), open.</summary>
         void PreviewTest()
         {
-            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") != "preview") return;
+            var which = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST");
+            if (which != "preview" && which != "previewclose") return;
             var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-            t.Tick += (s, e) => { t.Stop(); OpenPreview(); };
+            t.Tick += (s, e) =>
+            {
+                t.Stop();
+                OpenPreview();
+                if (which != "previewclose") return;
+                // "previewclose": the manager's window taken back, as a click on it does; then whether
+                // the preview is still open goes to HD2QD_WHEEL_OUT
+                var t2 = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                t2.Tick += (s2, e2) =>
+                {
+                    t2.Stop();
+                    bool before = preview != null;
+                    Activate();
+                    var t3 = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    t3.Tick += (s3, e3) =>
+                    {
+                        t3.Stop();
+                        var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                        if (path != null) System.IO.File.WriteAllText(path, "open before " + before + "\nopen after " + (preview != null) + "\n");
+                    };
+                    t3.Start();
+                };
+                t2.Start();
+            };
             t.Start();
         }
     }

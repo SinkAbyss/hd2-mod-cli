@@ -6251,7 +6251,7 @@ namespace QuickDeploy
 
             // how the list is worked
             body.Children.Add(Label("set_keys", new Thickness(0, 20, 0, 6)));
-            foreach (var key in new[] { "set_key_rename", "set_key_many" })
+            foreach (var key in new[] { "set_key_rename", "set_key_many", "set_key_space", "set_key_wheel" })
                 body.Children.Add(new TextBlock { Text = "· " + Texts.Get(key), Foreground = B("Ink"), FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 2) });
 
             // this program's own updates (the user, 2026-10-25)

@@ -456,6 +456,8 @@ namespace QuickDeploy
             ["set_keys"] = ("HOW TO WORK THE LIST", "操作说明"),
             ["set_key_rename"] = ("Double-click: change a mod's shown name", "双击：更改 MOD 的显示名称"),
             ["set_key_many"] = ("Ctrl or Shift: select several mods", "Ctrl 或 Shift：多选 MOD"),
+            ["set_key_space"] = ("Space: preview the chosen mod (its cover and options)", "空格键：预览所选 MOD 的封面和可选内容"),
+            ["set_key_wheel"] = ("Shift and the wheel: scroll the groups' columns sideways", "按住 Shift 滚动滚轮：横向滚动分组的分栏"),
             ["set_about"] = ("ABOUT", "关于"),
             ["set_update"] = ("UPDATES", "更新"),
             ["build_official"] = ("official build", "正式版"),
@@ -592,7 +594,7 @@ namespace QuickDeploy
             // groups (the user, 2026-10-27): folders in the window, only names in the library
             ["view_groups"] = ("Groups", "分组"),
             ["view_order"] = ("Order", "顺序"),
-            ["pv_open"] = ("Choose options (Space)", "选择可选内容（空格）"),
+            ["pv_open"] = ("Choose options", "选择可选内容"),
             ["pv_close"] = ("Space or Esc closes", "按空格键或 Esc 关闭"),
             ["pv_on"] = ("On", "已启用"),
             ["pv_off"] = ("Off", "已停用"),
