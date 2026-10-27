@@ -119,9 +119,6 @@
               <!-- with profiles on, the title is the profile in use, and opens the profiles -->
               <Button x:Name="ProfileBtn" Visibility="Collapsed" Cursor="Hand" FocusVisualStyle="{x:Null}"
                       VerticalAlignment="Center" Click="Profile_Click"/>
-              <!-- to the top of the list and to the end of it: new mods are at the end -->
-              <Button x:Name="TopBtn" Width="34" Height="34" Margin="16,0,0,4.5" VerticalAlignment="Center" Click="Top_Click"/>
-              <Button x:Name="BottomBtn" Width="34" Height="34" Margin="2,0,0,4.5" VerticalAlignment="Center" Click="Bottom_Click"/>
               <!-- the groups as Finder's columns, or the load order (the user, 2026-10-27) -->
               <Border BorderBrush="{StaticResource Grid}" BorderThickness="1" Margin="16,0,0,0" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal">

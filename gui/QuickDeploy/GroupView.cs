@@ -77,8 +77,6 @@ namespace QuickDeploy
             ViewOrder.IsChecked = !groupView;
             ListScroll.Visibility = groupView ? Visibility.Collapsed : Visibility.Visible;
             GroupScroll.Visibility = groupView ? Visibility.Visible : Visibility.Collapsed;
-            // the jump buttons are the load order's
-            TopBtn.Visibility = BottomBtn.Visibility = groupView ? Visibility.Collapsed : Visibility.Visible;
         }
 
         /// <summary>The groups of the mod chosen in the load order, opened.</summary>
@@ -298,13 +296,18 @@ namespace QuickDeploy
             return item;
         }
 
-        /// <summary>A folder in the group's colour: its tab, and its front over it.</summary>
+        /// <summary>A folder in the group's colour, in the window's own manner: square corners, its
+        /// tab cut at an angle, a corner of its front clipped, a dark line across it. The rounded one
+        /// was close to macOS's (the user, 2026-10-27).</summary>
         static FrameworkElement Folder(Color colour, double width)
         {
             var c = new Canvas { Width = 40, Height = 34 };
-            c.Children.Add(new Path { Data = Geometry.Parse("M2,6 A3,3 0 0 1 5,3 H15 L19,7 H35 A3,3 0 0 1 38,10 V29 A3,3 0 0 1 35,32 H5 A3,3 0 0 1 2,29 Z"),
-                                      Fill = new SolidColorBrush(colour) { Opacity = 0.55 } });
-            c.Children.Add(new Path { Data = Geometry.Parse("M2,11 H38 V29 A3,3 0 0 1 35,32 H5 A3,3 0 0 1 2,29 Z"), Fill = new SolidColorBrush(colour) });
+            // the back, with its tab cut at 45 degrees
+            c.Children.Add(new Path { Data = Geometry.Parse("M2,4 H15 L19,8 H38 V30 H2 Z"), Fill = new SolidColorBrush(colour) { Opacity = 0.5 } });
+            // the front, its lower right corner clipped
+            c.Children.Add(new Path { Data = Geometry.Parse("M2,12 H38 V27 L35,32 H2 Z"), Fill = new SolidColorBrush(colour) });
+            // a line across the front, the window's tape colour on it
+            c.Children.Add(new Path { Data = Geometry.Parse("M6,17 H20"), Stroke = (Brush)Application.Current.Resources["TapeInk"], StrokeThickness = 2, Opacity = 0.55 });
             return new Viewbox { Width = width, Height = width * 34 / 40, Child = c, VerticalAlignment = VerticalAlignment.Center };
         }
 

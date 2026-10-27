@@ -131,7 +131,6 @@ namespace QuickDeploy
             AddBtn.Content = Texts.Get("add");
             UpdatesBtn.Content = Texts.Get(checking ? "up_checking_btn" : "up_check");
             RefreshBtn.Content = Texts.Get("refresh");
-            JumpButtons();
             DeployBtn.Content = Texts.Get("deploy");
             LaunchBtn.Content = Texts.Get("launch");
             ListHint.Text = Texts.Get(groupView ? "g_hint" : Texts.TopWins ? "list_hint_top" : "list_hint");
@@ -6417,31 +6416,6 @@ namespace QuickDeploy
             b.Click += (s, e) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             return b;
         }
-
-        /// <summary>To the top of the list and to the end of it. A library grows at the end, so
-        /// the one that matters is the end (the user, 2026-10-25).</summary>
-        void JumpButtons()
-        {
-            Mark(TopBtn, GlyphTop, "jump_top");
-            Mark(BottomBtn, GlyphBottom, "jump_bottom");
-        }
-
-        void Mark(Button b, string glyph, string tip)
-        {
-            b.Template = Plain();
-            b.Cursor = Cursors.Hand;
-            b.FocusVisualStyle = null;
-            b.ToolTip = Texts.Get(tip);
-            b.Content = new Path
-            {
-                Data = Geometry.Parse(glyph), Width = 17, Height = 17, Stretch = Stretch.Uniform, Margin = new Thickness(8),
-                Stroke = B("Muted"), StrokeThickness = 2, StrokeEndLineCap = PenLineCap.Round, StrokeStartLineCap = PenLineCap.Round,
-            };
-        }
-
-        void Top_Click(object sender, RoutedEventArgs e) => ListScroll.ScrollToTop();
-
-        void Bottom_Click(object sender, RoutedEventArgs e) => ListScroll.ScrollToBottom();
 
         /// <summary>Where the list was left, so a library that grows at the end does not have to
         /// be scrolled down again on every start (the user, 2026-10-25). Kept in gui.json, taken
