@@ -191,20 +191,6 @@ namespace QuickDeploy
                 td.Start();
                 return;
             }
-            if (which == "pickwinner")
-            {
-                // "pickwinner" (pictures only): the chosen mod's first conflict, its choice asked
-                var tw = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-                tw.Tick += (s0, e0) =>
-                {
-                    tw.Stop();
-                    var m = st.Mods.First(x => x.Id == selectedId);
-                    var c = st.Clashes.First(x => !x.Same && x.Mods.Contains(m.Name));
-                    ChooseWinner(c.Mods.Select(n => st.Mods.First(x => x.Name == n).Id).ToList(), st.Mods.First(x => x.Name == c.Winner).Id, "pick_title_clash");
-                };
-                tw.Start();
-                return;
-            }
             if (which != "preview" && which != "previewclose") return;
             var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
             t.Tick += (s, e) =>

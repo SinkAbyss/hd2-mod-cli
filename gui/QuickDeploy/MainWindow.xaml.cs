@@ -1680,20 +1680,14 @@ namespace QuickDeploy
                 if (m.Enabled)
                 {
                     var issues = IssuesOf(m).ToList();
-                    var same = issues.FirstOrDefault(i => i.Kind == "same_name");
                     if (issues.Any(i => i.Kind == "no_loader"))
                         Line(st.Lua.Running == "other" && owner != null ? Texts.F("lua_other_boot", owner.Name) : Texts.Get("lua_no_loader"), "Yellow");
                     else if (issues.Any(i => i.Kind == "needs_chef"))
                         Line(Texts.F("lua_wrong_loader", running ?? "-"), "Yellow");
                     // started by Chef Shared Loader, which reads no script over 4 MB (2026-10-26)
                     if (issues.Any(i => i.Kind == "too_big_for_chef")) Line(Texts.F("lua_too_big", Texts.Size(lu.Biggest)), "Yellow");
-                    // the loader in effect is not repeated here: the card on the left says it (the user, 2026-10-26)
-                    if (same.Kind != null)
-                    {
-                        var winner = ById(same.Mods[0]);
-                        if (same.Mods[0] != m.Id) CopyLine(Texts.F("lua_same_name", winner?.Name ?? "?", same.Detail), "Yellow");
-                        else CopyLine(Texts.F("lua_same_name_wins", string.Join(", ", same.Mods.Skip(1).Select(id => ById(id)?.Name ?? "?")), same.Detail), "Muted");
-                    }
+                    // the loader in effect is not repeated here: the card on the left says it (the user, 2026-10-26);
+                    // a script name another mod declares too is its own card below, where it is chosen
                 }
             }
             // its scripts by the names the loader's log and Mod Lag Watchdog print (mods/author/name),
@@ -4391,18 +4385,13 @@ namespace QuickDeploy
             // a script name another mod declares too: only one of them runs (the later in the order)
             foreach (var issue in (st.Lua?.Issues ?? new List<(string Kind, List<string> Mods, string Detail)>()).Where(i => i.Kind == "same_name" && i.Mods.Contains(m.Id)))
             {
-                var others = string.Join(" / ", issue.Mods.Where(id => id != m.Id).Select(id => st.Mods.FirstOrDefault(x => x.Id == id)?.Name ?? id));
-                var runs = st.Mods.FirstOrDefault(x => x.Id == issue.Mods[0]);
                 var box = new StackPanel();
                 var sameHead = Selectable.Text(Texts.Get("lua_same_title"), 14, "Yellow");
                 sameHead.FontWeight = FontWeights.SemiBold;
                 box.Children.Add(sameHead);
-                box.Children.Add(Small(issue.Mods[0] == m.Id ? Texts.F("lua_same_runs_me", issue.Detail, others) : Texts.F("lua_same_runs_other", issue.Detail, runs?.Name ?? others),
-                                       new Thickness(0, 6, 0, 0)));
-                var pick = new Button { Content = Texts.Get("pick_runs"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
-                var ids = issue.Mods.ToList();
-                pick.Click += (s, e) => ChooseWinner(ids, ids[0], "pick_title_lua");
-                box.Children.Add(pick);
+                box.Children.Add(Small(Texts.F("lua_same_info", issue.Detail), new Thickness(0, 6, 0, 0)));
+                box.Children.Add(Small(Texts.Get("pick_runs_label"), new Thickness(0, 8, 0, 4)));
+                box.Children.Add(WinnerRows(issue.Mods.ToList(), issue.Mods[0], "pick_runs_now"));
                 Detail.Children.Add(new Border { BorderBrush = B("Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(12), Margin = new Thickness(0, 16, 0, 0), Child = box });
             }
             Detail.Children.Add(UpdatePanel(m));
@@ -4429,7 +4418,20 @@ namespace QuickDeploy
                 var clash = Selectable.Text(Texts.F(c.Same ? "same" : "clash", c.Count, others), 14, c.Same ? "Ink" : "Yellow");
                 clash.FontWeight = FontWeights.SemiBold;
                 box.Children.Add(clash);
-                box.Children.Add(Small(c.Same ? Texts.Get("same_tip") : Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
+                if (c.Same) box.Children.Add(Small(Texts.Get("same_tip"), new Thickness(0, 6, 0, 0)));
+                else
+                {
+                    // the one in effect shown at once, and chosen here by a click (the user, 2026-10-27:
+                    // it took a button and a window to see it)
+                    var ids = c.Mods.Select(n => st.Mods.FirstOrDefault(x => x.Name == n)?.Id).Where(id => id != null).ToList();
+                    var winner = st.Mods.FirstOrDefault(x => x.Name == c.Winner)?.Id;
+                    if (ids.Count > 1)
+                    {
+                        box.Children.Add(Small(Texts.Get("pick_wins_label"), new Thickness(0, 8, 0, 4)));
+                        box.Children.Add(WinnerRows(ids, winner, "pick_now"));
+                    }
+                    else box.Children.Add(Small(Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
+                }
                 // which resources (the user, 2026-10-25): type, then the name or the id
                 const int lines = 8;
                 var list = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
@@ -4450,19 +4452,6 @@ namespace QuickDeploy
                 if (list.Children.Count > 0) box.Children.Add(list);
                 if (!st.ResourceNames && c.Resources.Count > 0 && Texts.Hints)
                     box.Children.Add(Small(Texts.Get("clash_no_names"), new Thickness(0, 8, 0, 0)));
-                if (!c.Same)
-                {
-                    // the one that takes effect, chosen by the player: it moves after the others
-                    // (the user, 2026-10-27: a conflict was only said, never settled in the groups)
-                    var ids = c.Mods.Select(n => st.Mods.FirstOrDefault(x => x.Name == n)?.Id).Where(id => id != null).ToList();
-                    var winner = st.Mods.FirstOrDefault(x => x.Name == c.Winner)?.Id;
-                    if (ids.Count > 1)
-                    {
-                        var pick = new Button { Content = Texts.Get("pick_wins"), Style = (Style)FindResource("Ghost"), MinHeight = 32, Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
-                        pick.Click += (s, e) => ChooseWinner(ids, winner, "pick_title_clash");
-                        box.Children.Add(pick);
-                    }
-                }
                 Detail.Children.Add(new Border { BorderBrush = B(c.Same ? "Grid" : "Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(12), Margin = new Thickness(0, 16, 0, 0), Child = box });
             }
 
@@ -6279,11 +6268,6 @@ namespace QuickDeploy
             body.Children.Add(fline);
             body.Children.Add(Small(Texts.Get("set_fling_note"), new Thickness(0, 8, 0, 0)));
 
-            // how the list is worked
-            body.Children.Add(Label("set_keys", new Thickness(0, 20, 0, 6)));
-            foreach (var key in new[] { "set_key_rename", "set_key_many", "set_key_space", "set_key_wheel" })
-                body.Children.Add(new TextBlock { Text = "· " + Texts.Get(key), Foreground = B("Ink"), FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 2) });
-
             // this program's own updates (the user, 2026-10-25)
             body.Children.Add(Label("set_update", new Thickness(0, 20, 0, 6)));
             body.Children.Add(new TextBlock
@@ -6364,45 +6348,48 @@ namespace QuickDeploy
             body.Children.Add(Link(Texts.Get("project_name"), Texts.Get("project_url")));
         }
 
-        /// <summary>Which of these mods wins, asked: their pictures and names, the one that wins now
-        /// marked. The one chosen moves just after the last of the others in the load order (the
-        /// last one wins); the others keep their places.</summary>
-        void ChooseWinner(List<string> ids, string now, string questionKey)
+        /// <summary>The mods of a conflict as lines: picture, name, the one that wins now marked
+        /// (tagKey). A click on another makes it win: it moves just after the last of the others in
+        /// the load order (the last one wins); the others keep their places.</summary>
+        UIElement WinnerRows(List<string> ids, string now, string tagKey)
         {
             var mods = ids.Select(id => st.Mods.FirstOrDefault(x => x.Id == id)).Where(x => x != null).ToList();
-            if (mods.Count < 2) return;
-            var w = Dialog.Blank(this, out var body);
-            body.Children.Add(new TextBlock { Text = Texts.Get(questionKey), TextWrapping = TextWrapping.Wrap, FontSize = 14, Foreground = B("Ink"), Margin = new Thickness(0, 0, 0, 14) });
-            string chosen = null;
-            foreach (var m in mods)
+            var rowsBox = new StackPanel();
+            foreach (var x in mods)
             {
-                var line = new DockPanel { Width = 470 };      // the button centres what it holds: as wide as it, left to right
-                var pic = Picture(m.Icon, GlyphMod, 40, "Blue", 24);
+                bool wins = x.Id == now;
+                var line = new DockPanel();
+                var pic = Picture(x.Icon, GlyphMod, 28, "Blue", 18);
                 DockPanel.SetDock(pic, Dock.Left);
                 line.Children.Add(pic);
-                if (m.Id == now)
+                if (wins)
                 {
-                    // the size of the words around it (the user, 2026-10-27: 11 was too small to read)
                     var tag = new Border { Background = B("Yellow"), Padding = new Thickness(8, 2, 8, 2), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
-                                          Child = new TextBlock { Text = Texts.Get("pick_now"), FontSize = 13, FontWeight = FontWeights.Bold, Foreground = B("TapeInk") } };
+                                          Child = new TextBlock { Text = Texts.Get(tagKey), FontSize = 13, FontWeight = FontWeights.Bold, Foreground = B("TapeInk") } };
                     DockPanel.SetDock(tag, Dock.Right);
                     line.Children.Add(tag);
                 }
-                line.Children.Add(new TextBlock { Text = m.Name, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
-                var b = new Button { Style = (Style)FindResource("Ghost"), Padding = new Thickness(10, 8, 10, 8), Margin = new Thickness(0, 0, 0, 8),
-                                     HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = line };
-                var id = m.Id;
-                b.Click += (s, e) => { chosen = id; w.Close(); };
-                body.Children.Add(b);
+                line.Children.Add(new TextBlock { Text = x.Name, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
+                                                  TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = x.Name });
+                var row = new Border
+                {
+                    BorderBrush = B(wins ? "Yellow" : "Grid"), BorderThickness = new Thickness(1), Background = B("Ground900"),
+                    Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 0, 6), Child = line, Cursor = wins ? Cursors.Arrow : Cursors.Hand,
+                };
+                if (!wins)
+                {
+                    row.MouseEnter += (s, e) => row.BorderBrush = B("Muted");
+                    row.MouseLeave += (s, e) => row.BorderBrush = B("Grid");
+                    var id = x.Id;
+                    row.MouseLeftButtonUp += (s, e) =>
+                    {
+                        var last = mods.Where(o => o.Id != id).OrderBy(o => o.Index).Last();
+                        if (mods.First(o => o.Id == id).Index < last.Index) Run("move", id, "--after", last.Id);
+                    };
+                }
+                rowsBox.Children.Add(row);
             }
-            var cancel = new Button { Content = Texts.Get("cancel"), Style = (Style)FindResource("Ghost"), MinWidth = 96, MinHeight = 36, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
-            cancel.Click += (s, e) => w.Close();
-            body.Children.Add(cancel);
-            w.ShowDialog();
-            if (chosen == null || chosen == now) return;
-            var last = mods.Where(x => x.Id != chosen).OrderBy(x => x.Index).Last();
-            if (mods.First(x => x.Id == chosen).Index > last.Index) return;      // it is after them already
-            Run("move", chosen, "--after", last.Id);
+            return rowsBox;
         }
 
         /// <summary>A resource type as the conflicts name it: in words for the common ones, else the engine's name.</summary>
