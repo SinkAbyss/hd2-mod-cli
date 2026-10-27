@@ -93,6 +93,32 @@ namespace Hd2Mod.Tests
         }
 
         [Fact]
+        public void RemovingNativeInstallersKeepsLaterHudAndBootPatchesContiguous()
+        {
+            Setup();
+            Cli("add", Mod("Earlier texture", new Dictionary<string, byte[]> { [A + ".patch_0"] = Archive((12ul, 1ul)) }));
+            Cli("add", Mod("HUD", new Dictionary<string, byte[]> { [A + ".patch_0"] = LuaArchive((123ul, "-- HD2-Addon: mods/test/hud\nlocal hud = true\n")) }));
+            Cli("add", Mod("Chef", new Dictionary<string, byte[]> { [A + ".patch_0"] = LuaArchive((LuaMods.BootId, "-- Chef Shared Loader start-up stub 1.2.3\nlocal boot = true\n"), (LuaMods.ChefCoreId, "-- Chef Shared Loader 1.2.3\n")) }));
+            var lib = Library.Load();
+            var earlier = lib.Mods.Single(m => m.Name == "Earlier texture");
+            lib.Mods.Remove(earlier); lib.Mods.Insert(0, earlier); lib.Save();
+            foreach (int mask in Enumerable.Range(0, 8))
+            {
+                Select(mask); lib = Library.Load();
+                var plan = Deploy.Plan(lib);
+                var mains = plan.Where(w => Deploy.Patch.IsMatch(w.Name)).ToList();
+                Assert.Equal(new[] { A + ".patch_0", A + ".patch_1", A + ".patch_2" }, mains.Select(w => w.Name));
+                Assert.Equal(new[] { "Earlier texture", "HUD", "Chef" }, mains.Select(w => w.Mod));
+                foreach (var main in mains)
+                    foreach (var suffix in Deploy.Companions)
+                        Assert.Contains(plan, w => w.Name == main.Name + suffix && w.Src == main.Src + suffix);
+                Deploy.Run(lib, Game, verify: true);
+                Assert.True(Deploy.Check(lib, Game, true).Ok);
+                Assert.Equal(File.ReadAllBytes(mains[2].Src), File.ReadAllBytes(Path.Combine(Data, A + ".patch_2")));
+            }
+        }
+
+        [Fact]
         public void UnknownFilesOrChangedCompositionAreRefusedBeforePatchDeployment()
         {
             Setup(); Select(7);

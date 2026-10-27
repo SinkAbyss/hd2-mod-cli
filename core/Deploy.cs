@@ -156,6 +156,25 @@ namespace Hd2Mod
             // a boot that only starts its own mod goes to the game off the start-up slot, for
             // Boot Mod Loader to run (GuestBoots; the user, 2026-10-26)
             NativeConfigs.Filter(lib, out_);
+            // Filtering legacy installers can leave holes before a HUD or the loader.
+            // Number the surviving mains and their companions together, preserving order.
+            counters.Clear();
+            var names = new Dictionary<string, string>();
+            foreach (var w in out_)
+            {
+                var match = Patch.Match(w.Name);
+                if (!match.Success) continue;
+                var archive = match.Groups[1].Value;
+                counters.TryGetValue(archive, out var n);
+                counters[archive] = n + 1;
+                names[w.Name] = archive + ".patch_" + n;
+            }
+            foreach (var w in out_)
+            {
+                var suffix = Companions.FirstOrDefault(ext => w.Name.EndsWith(ext, StringComparison.Ordinal)) ?? "";
+                var main = w.Name.Substring(0, w.Name.Length - suffix.Length);
+                if (names.TryGetValue(main, out var name)) w.Name = name + suffix;
+            }
             GuestBoots.Apply(out_);
             return out_;
         }
