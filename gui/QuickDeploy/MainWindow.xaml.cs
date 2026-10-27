@@ -4790,9 +4790,9 @@ namespace QuickDeploy
                 menu.Items.Add(del);
                 return menu;
             }
-            // only what this menu alone can do: opening the folder, matching the source,
-            // removing and deleting are all on the mod's own page (the user, 2026-10-24:
-            // the menu had grown too long)
+            // opening the folder and matching the source are on the mod's own page (the user,
+            // 2026-10-24: the menu had grown too long); removing and deleting are here too, as for
+            // several mods (the user, 2026-10-27)
             ProfileItems(menu, Taken(m));
             Item("rename", () => RenameMod(m));
             menu.Items.Add(TagMenu(m));
@@ -4807,6 +4807,13 @@ namespace QuickDeploy
             menu.Items.Add(new Separator());
             Item("replace_zip", () => { var p = PickZip(); if (p != null) Run("replace", m.Id, p); });
             Item("replace_folder", () => { var p = PickFolder(); if (p != null) Run("replace", m.Id, p); });
+            menu.Items.Add(new Separator());
+            // the same questions as the details' buttons, asked once the menu has closed
+            Item("remove_menu", () => Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (Dialog.Ask(this, Texts.F("remove_ask", m.Name), Texts.Get("remove_btn"))) Run("remove", m.Id);
+            }), DispatcherPriority.ContextIdle));
+            Item("delete_menu", () => Dispatcher.BeginInvoke(new Action(() => DeleteFromDisk(m)), DispatcherPriority.ContextIdle), true);
             return menu;
         }
 

@@ -811,6 +811,8 @@ namespace QuickDeploy
             ["many_bottom"] = ("Move these {0} to the bottom", "将选中的 {0} 个移到底部"),
             ["many_remove"] = ("Remove these {0} from the library", "从库中移除选中的 {0} 个"),
             ["many_delete"] = ("Delete these {0} from the disk…", "从硬盘删除选中的 {0} 个…"),
+            ["remove_menu"] = ("Remove from the library", "从库中移除"),
+            ["delete_menu"] = ("Delete from the disk…", "从硬盘删除…"),
             ["many_remove_ask"] = ("Remove these {0} mods from the library? Their files stay where they are.",
                                    "要从库中移除选中的 {0} 个 mod 吗？它们的文件会保留在原处。"),
             ["rename"] = ("Rename…", "重命名…"),
