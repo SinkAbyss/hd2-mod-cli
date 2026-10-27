@@ -95,6 +95,15 @@ namespace Hd2Mod.Tests
             Assert.False(Api("local chef = require('chef')\nchef.log('x')"));                                         // not the argument
             Assert.False(Api("local t = ...\nt.chef.log('x')"));                                                        // somebody's field
             Assert.False(Api("-- local chef = ...\nx = 'chef.log'"));                                                  // comments and strings
+            // a chef of a function's or block's own is another variable: its tests do not count
+            // (HUDdle 0.4.9's modules, 2026-10-27)
+            Assert.True(Api("local chef = ...\nlocal M = (function()\n  local chef, O = nil, {}\n  if chef then end\n  chef = 1\nend)()\nchef.own_log('x')"));
+            Assert.True(Api("local chef = ...\nlocal f = function(chef, x) if chef then end end\nchef.time()"));
+            Assert.True(Api("local chef = ...\ndo local chef = 2; if chef then end end\nchef.time()"));
+            // the script's chef tested inside a function of its own: still a fallback
+            Assert.False(Api("local chef = ...\nlocal function f() if chef then end end\nchef.time()"));
+            // a function's ... is its own arguments, not the script's
+            Assert.False(Api("local function f(...) local chef = ... chef.time() end"));
         }
 
         [Fact]
