@@ -2931,7 +2931,11 @@ namespace QuickDeploy
             storageSel = r.Out;
             RenderStorage();
             var finds = Storage.Look(r.Out, Library.Load());
-            if (finds.Managers.Count > 0 || finds.Loose.Count > 0) ImportFromManagers(false, finds, r.Out);
+            // a manager's store whose list was not found, or found and not read, is said and its list
+            // asked for, as Import from managers does: the folder was only added, in silence (players
+            // on 0.11.0 picked their HD2 Arsenal folder there, 2026-10-27)
+            if (finds.Managers.Count > 0 || finds.Loose.Count > 0 || finds.NeedsConfig != null || finds.Problems.Count > 0)
+                ImportFromManagers(false, finds, r.Out);
         }
 
         /// <summary>The menu at the list's title: the profiles (one is in use), the mod library,
@@ -3250,6 +3254,16 @@ namespace QuickDeploy
                 Texts.F(x.ProblemKind == "bad_format" || x.ProblemKind == "bad_version" ? "im_problem_format" : "im_problem", x.Name, x.Where, x.Problem)));
             if (found.Count == 0 && loose.Count == 0)
             {
+                // a library folder whose manager's list could not be read: said, and another file
+                // of that manager can be chosen (the user, 2026-10-27)
+                var unread = folder != null ? all.FirstOrDefault(x => x.Problem != null) : null;
+                if (unread != null)
+                {
+                    if (!Dialog.Ask(this, problems + "\n\n" + Texts.Get("lf_list_other"), Texts.Get("lf_list_pick"))) return;
+                    var other = AskForList(unread.Key, folder, false);
+                    if (other != null) ImportFromManagers(false, new FolderFinds { Managers = { other } }, folder);
+                    return;
+                }
                 if (problems.Length > 0) Dialog.Tell(this, problems);
                 else if (!firstStart) Dialog.Tell(this, Texts.Get("im_none"));
                 return;
@@ -3309,10 +3323,10 @@ namespace QuickDeploy
 
         /// <summary>A manager's store whose list was not found: the player is told which manager's it
         /// is and asked for its list file, which must list mods in this folder. Null: not given.</summary>
-        ImportSource AskForList(string key, string folder)
+        ImportSource AskForList(string key, string folder, bool ask = true)
         {
             var (name, file, usual) = Importers.ConfigOf(key);
-            if (!Dialog.Ask(this, Texts.F("lf_list_ask", name, file), Texts.Get("lf_list_pick"))) return null;
+            if (ask && !Dialog.Ask(this, Texts.F("lf_list_ask", name, file), Texts.Get("lf_list_pick"))) return null;
             var pick = new Microsoft.Win32.OpenFileDialog
             {
                 Title = Texts.F("lf_list_title", name), Filter = file + "|" + file + "|JSON (*.json)|*.json", CheckFileExists = true,

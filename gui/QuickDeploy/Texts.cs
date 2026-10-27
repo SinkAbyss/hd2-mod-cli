@@ -510,6 +510,7 @@ namespace QuickDeploy
             ["lf_list_ask"] = ("This is {0}'s mod folder, but its configuration file ({1}) was not found where {0} usually keeps it. That file holds the load order, the switches and the options; the mods are brought in only through it. Choose the file.",
                                "这是 {0} 存放 mod 的文件夹，但在 {0} 通常保存配置文件的位置没有找到它（{1}）。加载顺序、开关和选项都记录在这个文件中，mod 只能通过它导入。请选择这个文件。"),
             ["lf_list_pick"] = ("Choose the file", "选择配置文件"),
+            ["lf_list_other"] = ("Another copy of the file can be chosen to bring the mods in from.", "可以选择该文件的其他副本，从中导入 mod。"),
             ["lf_list_title"] = ("{0}'s configuration file", "{0} 的配置文件"),
             ["lf_list_none"] = ("{0} lists no mod in {1}.", "{0} 中没有记录 {1} 里的 mod。"),
             ["lf_list_bad"] = ("{0} cannot be read: {1}", "无法读取 {0}：{1}"),
