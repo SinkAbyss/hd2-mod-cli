@@ -89,8 +89,20 @@ namespace QuickDeploy
             w.Content = col;
             w.MouseLeftButtonDown += (s, e) => { if (e.ButtonState == MouseButtonState.Pressed) w.DragMove(); };
             w.KeyDown += (s, e) => { if (e.Key == Key.Escape) w.Close(); };
+            Redraw(w);
             return w;
         }
+
+        /// <summary>Once on screen, laid out and drawn again: the first question of a session (Delete
+        /// group, the user, 2026-10-27) came up with only its Cancel button drawn.</summary>
+        static void Redraw(Window w) =>
+            w.ContentRendered += (s, e) =>
+            {
+                w.InvalidateMeasure();
+                w.UpdateLayout();
+                if (w.Content is UIElement c) c.InvalidateVisual();
+                w.InvalidateVisual();
+            };
 
         /// <summary>The dialog's window: the tape on top, the text, a body to add to.</summary>
         static Window Frame(Window owner, string text, out StackPanel body)
@@ -110,6 +122,7 @@ namespace QuickDeploy
             body.Children.Add(Selectable.Text(text, 15, "Ink", null, 22));      // a message can be copied
             w.Content = col;
             w.MouseLeftButtonDown += (s, e) => { if (e.ButtonState == MouseButtonState.Pressed) w.DragMove(); };
+            Redraw(w);
             return w;
         }
 

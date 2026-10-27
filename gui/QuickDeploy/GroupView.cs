@@ -514,14 +514,14 @@ namespace QuickDeploy
             // mods from several groups: none of them is ticked
             string current = groups.Count == 1 ? groups[0] : "several";
             void Put(string g) => Run(new[] { "group-put" }.Concat(ids).Concat(g == null ? new[] { "--top" } : new[] { "--in", g }).ToArray());
-            void MakeAndPut(string parent)
+            void MakeAndPut(string parent) => AfterMenu(() =>
             {
                 var name = Dialog.AskText(this, Texts.Get("g_rename_ask"), Texts.Get("g_create"), Texts.Get("g_new_name"))?.Trim();
                 if (string.IsNullOrEmpty(name)) return;
                 var made = parent == null ? new[] { "group-new", name } : new[] { "group-new", name, "--in", parent };
                 var path = parent == null ? name : PathText(parent) + "/" + name;
                 RunMany(new List<string[]> { made, new[] { "group-put" }.Concat(ids).Concat(new[] { "--in", path }).ToArray() });
-            }
+            });
             return GroupPicker(Texts.Get("g_move_to"), current, g => true, Put, MakeAndPut, "g_put_here", true);
         }
 
@@ -553,7 +553,13 @@ namespace QuickDeploy
             return menu;
         }
 
-        void NewGroup(string parent)
+        /// <summary>A question asked once the menu that called for it has closed: asked while it
+        /// was closing, the first one came up half drawn (the user, 2026-10-27).</summary>
+        void AfterMenu(Action act) => Dispatcher.BeginInvoke(act, System.Windows.Threading.DispatcherPriority.ContextIdle);
+
+        void NewGroup(string parent) => AfterMenu(() => NewGroupNow(parent));
+
+        void NewGroupNow(string parent)
         {
             var name = Dialog.AskText(this, Texts.Get("g_rename_ask"), Texts.Get("g_create"), Texts.Get("g_new_name"));
             name = name?.Trim();
@@ -562,7 +568,9 @@ namespace QuickDeploy
             Run(parent == null ? new[] { "group-new", name } : new[] { "group-new", name, "--in", parent });
         }
 
-        void RenameGroup(GroupRow g)
+        void RenameGroup(GroupRow g) => AfterMenu(() => RenameGroupNow(g));
+
+        void RenameGroupNow(GroupRow g)
         {
             var name = Dialog.AskText(this, Texts.Get("g_rename_ask"), Texts.Get("rename_save"), g.Name);
             name = name?.Trim();
@@ -570,7 +578,9 @@ namespace QuickDeploy
             Run("group-rename", g.Id, name);
         }
 
-        void DeleteGroup(GroupRow g)
+        void DeleteGroup(GroupRow g) => AfterMenu(() => DeleteGroupNow(g));
+
+        void DeleteGroupNow(GroupRow g)
         {
             if (!Dialog.Ask(this, Texts.F("g_delete_ask", g.Name), Texts.Get("g_delete"))) return;
             Run("group-delete", g.Id);

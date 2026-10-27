@@ -168,6 +168,29 @@ namespace QuickDeploy
         void PreviewTest()
         {
             var which = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST");
+            if (which == "deletegroup")
+            {
+                // "deletegroup" (pictures only): a folder's menu opened and its Delete clicked, as a
+                // hand does, the first time in this window
+                var td = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                td.Tick += (s0, e0) =>
+                {
+                    td.Stop();
+                    var g = st.Groups.First(x => x.Parent == null);
+                    var folder = GroupCols.Children.OfType<Border>().SelectMany(c => ((StackPanel)((ScrollViewer)c.Child).Content).Children.OfType<Border>())
+                        .First(b => b.Tag is GroupDrop d && d.Group == g.Id);
+                    var menu = folder.ContextMenu;
+                    menu.PlacementTarget = folder;
+                    menu.IsOpen = true;
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        var del = menu.Items.OfType<MenuItem>().Last();
+                        del.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, del));
+                    }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                };
+                td.Start();
+                return;
+            }
             if (which == "pickwinner")
             {
                 // "pickwinner" (pictures only): the chosen mod's first conflict, its choice asked
