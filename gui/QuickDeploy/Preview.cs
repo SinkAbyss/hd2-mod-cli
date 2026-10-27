@@ -168,6 +168,35 @@ namespace QuickDeploy
         void PreviewTest()
         {
             var which = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST");
+            if (which == "menudump")
+            {
+                // "menudump": two mods of one group taken, their menu in both views as text to HD2QD_WHEEL_OUT
+                var tm = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                tm.Tick += (s0, e0) =>
+                {
+                    tm.Stop();
+                    var two = st.Mods.Where(x => x.Group != null && x.Enabled).GroupBy(x => x.Group).First(g => g.Count() >= 2).Take(2).ToList();
+                    var log = new System.Text.StringBuilder();
+                    foreach (var view in new[] { true, false })
+                    {
+                        groupView = view;
+                        picked.Clear();
+                        foreach (var x in two) picked.Add(x.Id);
+                        selectedId = two[0].Id;
+                        log.AppendLine("== " + (view ? "groups" : "order") + ", two taken");
+                        foreach (var it in Menu(two[0]).Items)
+                            log.AppendLine("  " + (it is MenuItem mi ? mi.Header : "--"));
+                        picked.Clear();
+                        log.AppendLine("== " + (view ? "groups" : "order") + ", one");
+                        foreach (var it in Menu(two[0]).Items)
+                            log.AppendLine("  " + (it is MenuItem mi ? mi.Header : "--"));
+                    }
+                    var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
+                    if (path != null) System.IO.File.WriteAllText(path, log.ToString());
+                };
+                tm.Start();
+                return;
+            }
             if (which == "deletegroup")
             {
                 // "deletegroup" (pictures only): a folder's menu opened and its Delete clicked, as a

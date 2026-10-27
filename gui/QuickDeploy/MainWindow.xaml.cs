@@ -4734,22 +4734,35 @@ namespace QuickDeploy
             var many = Taken(m);
             if (many.Count > 1)
             {
-                var on = new MenuItem { Header = Texts.F("many_on", many.Count) };
-                on.Click += (s, e) => { foreach (var x in many.Where(x => !x.Enabled)) Change(x.Id, c => c.Enabled = true, "enable", x.Id); };
-                menu.Items.Add(on);
-                var off = new MenuItem { Header = Texts.F("many_off", many.Count) };
-                off.Click += (s, e) => { foreach (var x in many.Where(x => x.Enabled)) Change(x.Id, c => c.Enabled = false, "disable", x.Id); };
-                menu.Items.Add(off);
+                // only the switch that does something: all on, Turn off alone; all off, Turn on alone
+                // (the user, 2026-10-27: the menu had grown long)
+                if (many.Any(x => !x.Enabled))
+                {
+                    var on = new MenuItem { Header = Texts.F("many_on", many.Count) };
+                    on.Click += (s, e) => { foreach (var x in many.Where(x => !x.Enabled)) Change(x.Id, c => c.Enabled = true, "enable", x.Id); };
+                    menu.Items.Add(on);
+                }
+                if (many.Any(x => x.Enabled))
+                {
+                    var off = new MenuItem { Header = Texts.F("many_off", many.Count) };
+                    off.Click += (s, e) => { foreach (var x in many.Where(x => x.Enabled)) Change(x.Id, c => c.Enabled = false, "disable", x.Id); };
+                    menu.Items.Add(off);
+                }
                 // the top and bottom of the screen: with the winner shown at the top, the other
                 // ends of the load order. One move of them all, in the order they have
                 string[] To(string end) => new[] { "move" }.Concat(many.Select(x => x.Id)).Concat(new[] { end }).ToArray();
                 ProfileItems(menu, many);
-                var up = new MenuItem { Header = Texts.F("many_top", many.Count) };
-                up.Click += (s, e) => Run(To(Texts.TopWins ? "--bottom" : "--top"));
-                menu.Items.Add(up);
-                var down = new MenuItem { Header = Texts.F("many_bottom", many.Count) };
-                down.Click += (s, e) => Run(To(Texts.TopWins ? "--top" : "--bottom"));
-                menu.Items.Add(down);
+                // the order's ends only where the order is shown: in the groups which one wins is
+                // chosen in a conflict's card
+                if (!groupView)
+                {
+                    var up = new MenuItem { Header = Texts.F("many_top", many.Count) };
+                    up.Click += (s, e) => Run(To(Texts.TopWins ? "--bottom" : "--top"));
+                    menu.Items.Add(up);
+                    var down = new MenuItem { Header = Texts.F("many_bottom", many.Count) };
+                    down.Click += (s, e) => Run(To(Texts.TopWins ? "--top" : "--bottom"));
+                    menu.Items.Add(down);
+                }
                 menu.Items.Add(TagMenu(m));
                 menu.Items.Add(ModGroupMenu(many));
                 if (many.Any(x => x.Channel == "Nexus Mods" || x.Channel == "GitHub"))
@@ -4786,8 +4799,11 @@ namespace QuickDeploy
             menu.Items.Add(ModGroupMenu(new List<ModRow> { m }));
             // the top and bottom of the screen, as the list is shown
             bool topWins = Texts.TopWins;
-            Item(topWins ? "top_wins_top" : "top", () => Run("move", m.Id, topWins ? "--bottom" : "--top"));
-            Item(topWins ? "top_wins_bottom" : "bottom", () => Run("move", m.Id, topWins ? "--top" : "--bottom"));
+            if (!groupView)
+            {
+                Item(topWins ? "top_wins_top" : "top", () => Run("move", m.Id, topWins ? "--bottom" : "--top"));
+                Item(topWins ? "top_wins_bottom" : "bottom", () => Run("move", m.Id, topWins ? "--top" : "--bottom"));
+            }
             menu.Items.Add(new Separator());
             Item("replace_zip", () => { var p = PickZip(); if (p != null) Run("replace", m.Id, p); });
             Item("replace_folder", () => { var p = PickFolder(); if (p != null) Run("replace", m.Id, p); });
