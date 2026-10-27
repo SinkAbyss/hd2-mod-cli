@@ -423,7 +423,17 @@ namespace QuickDeploy
                 if (e.ClickCount == 2) { e.Handled = true; RenameMod(m); return; }
                 gDragFrom = ("mod", m.Id, m.Name, e.GetPosition(GroupScroll));
             };
-            item.ContextMenu = Menu(m);
+            var menu = Menu(m);
+            // a group made here: with no group yet the column is long and its button far down
+            // (the user, 2026-10-27)
+            if (m.Group == null || LevelOf(m.Group) < Groups.Depth)
+            {
+                var make = new MenuItem { Header = Texts.Get("g_new_top") };
+                make.Click += (s, e) => NewGroup(m.Group);
+                menu.Items.Insert(0, make);
+                menu.Items.Insert(1, new Separator());
+            }
+            item.ContextMenu = menu;
             return item;
         }
 
@@ -518,6 +528,9 @@ namespace QuickDeploy
         ContextMenu FolderMenu(GroupRow g)
         {
             var menu = new ContextMenu();
+            var beside = new MenuItem { Header = Texts.Get("g_new_top") };
+            beside.Click += (s, e) => NewGroup(g.Parent);
+            menu.Items.Add(beside);
             if (LevelOf(g.Id) < Groups.Depth)
             {
                 var inner = new MenuItem { Header = Texts.Get("g_new_in") };
@@ -652,6 +665,18 @@ namespace QuickDeploy
             GroupScroll.LostMouseCapture += (s, e) => { if (gDragging) EndGroupDrag(); };
             PreviewKeyDown += (s, e) => { if (gDragging && e.Key == Key.Escape) { EndGroupDrag(); e.Handled = true; } };
             PreviewKeyDown += GroupKeys;
+            PreviewKeyDown += SpacePreview;
+            // a wheel tilted sideways, or a touchpad's sideways swipe (WM_MOUSEHWHEEL)
+            System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle)?.AddHook((IntPtr hwnd, int msg, IntPtr wp, IntPtr lp, ref bool handled) =>
+            {
+                if (msg == 0x020E && groupView && GroupScroll.IsVisible && GroupScroll.IsMouseOver)
+                {
+                    int delta = (short)((wp.ToInt64() >> 16) & 0xFFFF);
+                    GroupScroll.ScrollToHorizontalOffset(GroupScroll.HorizontalOffset + delta);
+                    handled = true;
+                }
+                return IntPtr.Zero;
+            });
             GroupScroll.SizeChanged += (s, e) => FitColumns();
         }
 

@@ -190,6 +190,7 @@ namespace QuickDeploy
             Refresh();
             ClickTest();
             GroupTest();
+            PreviewTest();
             DragTest();
             Listen();
             SelfUpdateAtStart();
@@ -4193,15 +4194,15 @@ namespace QuickDeploy
             // a picture when the mod has one; else only the words, all of them (the name and
             // the author's description wrap; nothing is cut or left to a tooltip)
             bool hasPicture = LoadImage(icon) != null;
-            var b = new Button { Width = hasPicture ? 140 : 200, Margin = new Thickness(0, 0, 8, 8), Cursor = Cursors.Hand, Template = Plain(), FocusVisualStyle = null, Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Top };
+            var b = new Button { Width = hasPicture ? (bigCards ? 220 : 140) : 200, Margin = new Thickness(0, 0, 8, 8), Cursor = Cursors.Hand, Template = Plain(), FocusVisualStyle = null, Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Top };
             var frame = new Border { BorderBrush = on ? B("Yellow") : B("Grid"), BorderThickness = new Thickness(2), Background = B("Ground900"), Padding = new Thickness(8) };
             var grid = new Grid();
             var col = new StackPanel();
             if (hasPicture)
                 col.Children.Add(new Border
                 {
-                    Height = 120, BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Opacity = on ? 1 : 0.6,
-                    Child = Picture(icon, GlyphPart, 0, on ? "Yellow" : "Muted", 56),
+                    Height = bigCards ? 200 : 120, BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Opacity = on ? 1 : 0.6,
+                    Child = (bigCards ? Full(icon) : null) ?? Picture(icon, GlyphPart, 0, on ? "Yellow" : "Muted", 56),
                 });
             // the tick sits top right: words beside it keep clear of it
             var right = hasPicture ? 0 : 26;
@@ -4226,6 +4227,7 @@ namespace QuickDeploy
 
         void RenderDetail()
         {
+            FillPreview();
             Detail.Children.Clear();
             var m = st?.Mods.FirstOrDefault(x => x.Id == selectedId);
             if (m == null && st != null && groupView && groupPath.Count > 0)
@@ -4374,14 +4376,13 @@ namespace QuickDeploy
             }
             if (!string.IsNullOrEmpty(m.Source) && m.Source != m.Path) Fact("d_source", m.Source, true, true);
             Detail.Children.Add(facts);
-            // in the groups the rows do not open: a mod's options are here (the user, 2026-10-27)
-            if (groupView && m.Options.Count > 0 && Options(m) is FrameworkElement opts)
+            // in the groups the options are chosen in the preview (Space), not here: a long list of
+            // them kept the details scrolling (the user, 2026-10-27)
+            if (groupView && m.Options.Count > 0)
             {
-                opts.Margin = new Thickness(0, 4, 0, 0);
-                var box = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
-                box.Children.Add(Label("d_opts", new Thickness(0, 0, 0, 2)));
-                box.Children.Add(opts);
-                Detail.Children.Add(box);
+                var choose = new Button { Content = Texts.Get("pv_open"), Style = (Style)FindResource("Ghost"), MinHeight = 36, Margin = new Thickness(0, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
+                choose.Click += (s, e) => { if (preview == null) OpenPreview(); else preview.Activate(); };
+                Detail.Children.Add(choose);
             }
             // its scripts: what starts them, and whether they will run (the user, 2026-10-26);
             // before its updates, which matter less than whether it runs at all
@@ -5323,6 +5324,14 @@ namespace QuickDeploy
         /// for as long as the wheel turned, 4 to 10 seconds (the user, 2026-10-25).</summary>
         void Wheel(object sender, MouseWheelEventArgs e)
         {
+            if (!e.Handled && e.Delta != 0 && Keyboard.Modifiers == ModifierKeys.Shift && GroupScroll.IsVisible &&
+                e.OriginalSource is Visual sv && GroupScroll.IsAncestorOf(sv))
+            {
+                // the groups' columns sideways with Shift, as browsers do (the user, 2026-10-27)
+                GroupScroll.ScrollToHorizontalOffset(GroupScroll.HorizontalOffset - e.Delta);
+                e.Handled = true;
+                return;
+            }
             if (e.Handled || e.Delta == 0 || Keyboard.Modifiers != ModifierKeys.None) return;
             var from = e.OriginalSource as DependencyObject;
             var scrolls = Scrolls(from).ToList();
