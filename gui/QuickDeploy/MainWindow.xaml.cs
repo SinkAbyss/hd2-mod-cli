@@ -4316,10 +4316,10 @@ namespace QuickDeploy
             {
                 var box = new StackPanel();
                 var others = string.Join(" / ", c.Mods.Where(x => x != m.Name));
-                var clash = Selectable.Text(Texts.F(c.Same ? "same" : "clash", c.Count, others), 14, c.Same ? "Ink" : "Yellow");
+                var clash = Selectable.Text(Texts.F(c.ManagedBoot ? "managed_boot" : c.Same ? "same" : "clash", c.Count, others), 14, c.Same || c.ManagedBoot ? "Ink" : "Yellow");
                 clash.FontWeight = FontWeights.SemiBold;
                 box.Children.Add(clash);
-                box.Children.Add(Small(c.Same ? Texts.Get("same_tip") : Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
+                box.Children.Add(Small(c.ManagedBoot ? Texts.Get("managed_boot_tip") : c.Same ? Texts.Get("same_tip") : Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
                 // which resources (the user, 2026-10-25): type, then the name or the id
                 const int lines = 8;
                 var list = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
