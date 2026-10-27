@@ -4990,6 +4990,7 @@ namespace QuickDeploy
         {
             if (checking || !checkingOne.Add(m.Id)) return;
             RenderList();
+            RenderDetail();
             string was = null, failed = null;
             UpdateInfo u = null;
             try
@@ -5010,7 +5011,7 @@ namespace QuickDeploy
             if (failed != null)
             {
                 Foot(Texts.F("failed", failed), "Yellow");
-                if (st != null) RenderList();
+                if (st != null) { RenderList(); RenderDetail(); }
                 return;
             }
             updates[u.ModId] = u;
@@ -5104,6 +5105,15 @@ namespace QuickDeploy
             // the buttons in two columns of the same width, the odd one last across both:
             // a row of them wrapped into a ragged second line (the user, 2026-10-24)
             var buttons = new List<Button>();
+            var check = new Button
+            {
+                Content = Texts.Get(checkingOne.Contains(m.Id) ? "up_checking_btn" : "up_check"),
+                Style = (Style)FindResource("Ghost"), MinHeight = 34,
+                IsEnabled = !checking && !checkingOne.Contains(m.Id),
+                ToolTip = Texts.Get("up_check_row_tip"),
+            };
+            check.Click += (s, e) => CheckOne(m);
+            buttons.Add(check);
             if (apply)
             {
                 var go = new Button { Content = Texts.Get(u.Status == "update" ? "up_apply" : "up_apply_latest"), Style = (Style)FindResource("Primary"), MinHeight = 34 };
@@ -6600,9 +6610,13 @@ namespace QuickDeploy
             int added = 0;
             foreach (var p in many) if (await Act(() => Cli.Run("add", p), false)) added++;
             var fresh = Library.Load().Mods.Where(m => !before.Contains(m.Id)).ToList();
-            if (fresh.Count == 0) return;
+            if (fresh.Count == 0)
+            {
+                if (added > 0) Foot(Texts.F("drop_processed", Texts.N(added)), "Blue");
+                return;
+            }
             Current(fresh[0].Id);
-            Foot(Texts.F("drop_done", Texts.N(added)), "Blue");
+            Foot(Texts.F("drop_processed", Texts.N(added)), "Blue");
             AdviseDrive(fresh);
         }
 

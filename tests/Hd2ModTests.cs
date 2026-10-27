@@ -954,6 +954,35 @@ namespace Hd2Mod.Tests
 
     public class LibraryOps : Fixture
     {
+        [Fact]
+        public void AddingANewVersionWithTheSameManifestIdentityReplacesTheEntry()
+        {
+            const string identity = "3f7a2c91-6d4e-4b58-9a0c-e15b82d4f6a7";
+            var first = Path.Combine(Root, "loader-old.zip");
+            var next = Path.Combine(Root, "loader-new.zip");
+            Zip(first, ("manifest.json", "{\"Guid\":\"" + identity + "\",\"Name\":\"Loader v1\"}"), (A + ".patch_0", "old"));
+            Zip(next, ("manifest.json", "{\"Guid\":\"" + identity + "\",\"Name\":\"Loader v2\"}"), (A + ".patch_0", "new"));
+            Cli("add", first);
+            var original = Library.Load().Mods.Single();
+            Cli("rename", original.Id, "My loader");
+            Cli("disable", original.Id);
+            Cli("group-new", "Scripts");
+            Cli("group-put", original.Id, "--in", "Scripts");
+            Cli("tag", original.Id, "dev");
+            var group = Library.Load().Mods.Single().Group;
+            Assert.Contains("replaced:", Cli("add", next));
+            var replaced = Assert.Single(Library.Load().Mods);
+            Assert.Equal(original.Id, replaced.Id);
+            Assert.Equal("My loader", replaced.Name);
+            Assert.Equal("Loader v2", replaced.RealName);
+            Assert.False(replaced.Enabled);
+            Assert.Equal(group, replaced.Group);
+            Assert.Contains("dev", replaced.Tags);
+            Assert.Equal("new", File.ReadAllText(Path.Combine(replaced.Path, A + ".patch_0")));
+            Cli("add", next, "--name", "Explicit variant");
+            Assert.Equal(2, Library.Load().Mods.Count);
+        }
+
         static void Zip(string path, params (string Name, string Body)[] entries)
         {
             using (var z = ZipFile.Open(path, ZipArchiveMode.Create))

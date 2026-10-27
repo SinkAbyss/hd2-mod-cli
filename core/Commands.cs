@@ -500,6 +500,25 @@ namespace Hd2Mod
             }
             var folder = Ops.SourceFolder(path, cfg, a.Flag("--copy"));
             var mod = Ops.NewMod(folder, a.Value("--name"), Paths.Abs(path));
+            // A stable manifest identity survives versioned names and the player's rename.
+            // --name explicitly requests a separate entry (for example a variant).
+            var identity = Manifest.Read(folder)?.Guid;
+            if (a.Value("--name") == null && !string.IsNullOrWhiteSpace(identity))
+            {
+                var matches = lib.Mods.Where(m =>
+                {
+                    try { return string.Equals(Manifest.Read(m.Path)?.Guid, identity, StringComparison.OrdinalIgnoreCase); }
+                    catch (Exception e) when (e is ModError || e is IOException || e is UnauthorizedAccessException) { return false; }
+                }).ToList();
+                if (matches.Count > 1)
+                    throw new ModError("Several library entries have this manifest identity; select the entry to replace explicitly.");
+                if (matches.Count == 1)
+                {
+                    a.Pos["mod"] = matches[0].Id;
+                    Replace(a, o);
+                    return;
+                }
+            }
             if (File.Exists(path)) Origins.FromFile(mod, path);               // a download: where it came from
             if (lib.Mods.Any(m => m.Name == mod.Name))
                 throw new ModError("a mod named " + Ops.Repr(mod.Name) + " is in the library: use  hd2qd replace  or --name", "duplicate", mod.Name);

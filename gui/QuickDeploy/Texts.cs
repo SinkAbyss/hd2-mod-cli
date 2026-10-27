@@ -205,6 +205,7 @@ namespace QuickDeploy
             ["drop_none"] = ("Nothing here can be installed: drop a zip archive (.zip, .7z, .rar) or a mod folder.",
                              "无法安装拖入的内容，请拖入 zip 压缩包（.zip、.7z、.rar）或 mod 文件夹。"),
             ["drop_done"] = ("{0} mods added", "已添加 {0} 个 mod"),
+            ["drop_processed"] = ("{0} mods added or updated", "已添加或更新 {0} 个 mod"),
             // the details
             ["manifest"] = ("MANIFEST // DESCRIPTION", "MANIFEST // 作者说明"),
             ["no_desc"] = ("The mod has no description.", "此 mod 没有说明。"),
