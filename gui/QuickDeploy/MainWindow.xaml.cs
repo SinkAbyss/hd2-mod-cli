@@ -3735,6 +3735,7 @@ namespace QuickDeploy
                         VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Center,
                     },
                 });
+            if (m.NativeConfig) meta.Children.Add(Fact(Texts.Get("native_tag"), "Blue"));
             if (m.Conflicts > 0) meta.Children.Add(Fact(Texts.F("row_clash", m.Conflicts), "Yellow"));
             // the same bytes in two mods are only worth a mention (the user, 2026-10-24)
             if (m.Shared > 0) meta.Children.Add(Fact(Texts.F("row_same", m.Shared), "Muted", Texts.Get("same_tip")));
@@ -4104,7 +4105,7 @@ namespace QuickDeploy
                 }
                 box.Children.Add(cards);
             }
-            var chosenFiles = m.Files.Count;
+            var chosenFiles = m.Files.Count + (m.NativeConfig ? m.NativeTargets.Count : 0);
             box.Children.Add(new TextBlock
             {
                 Text = Texts.F("opt_foot", m.Chosen, Texts.N(chosenFiles), Texts.Size(m.DeployBytes)),
@@ -4186,7 +4187,7 @@ namespace QuickDeploy
                 names.Children.Add(ver);
             }
             else names.Children.Add(new TextBlock { Text = Texts.Get("ver_none"), FontFamily = Mono, FontSize = 14, Foreground = B("Muted"), ToolTip = VersionTip(m), Margin = new Thickness(0, 2, 0, 2) });
-            names.Children.Add(new TextBlock { Text = Texts.F("n_files", Texts.N(m.Files.Count)) + " · " + Texts.Size(m.DeployBytes), FontFamily = Mono, FontSize = 14, FontWeight = FontWeights.Bold });
+            names.Children.Add(new TextBlock { Text = Texts.F("n_files", Texts.N(m.Files.Count + (m.NativeConfig ? m.NativeTargets.Count : 0))) + " · " + Texts.Size(m.DeployBytes), FontFamily = Mono, FontSize = 14, FontWeight = FontWeights.Bold });
             head.Children.Add(names);
             Detail.Children.Add(head);
 
@@ -4196,9 +4197,9 @@ namespace QuickDeploy
             man.Children.Add(new Border
             {
                 HorizontalAlignment = HorizontalAlignment.Left, Background = B("Yellow"), Padding = new Thickness(8, 0, 8, 0),
-                Child = new TextBlock { Text = Texts.Get(fromSite ? "site_words" : "manifest"), FontFamily = Mono, FontSize = 11, FontWeight = FontWeights.Bold, Foreground = B("TapeInk") },
+                Child = new TextBlock { Text = Texts.Get(m.NativeConfig ? "native_mode" : fromSite ? "site_words" : "manifest"), FontFamily = Mono, FontSize = 11, FontWeight = FontWeights.Bold, Foreground = B("TapeInk") },
             });
-            string desc = fromSite ? m.SiteSummary.Trim() : string.IsNullOrWhiteSpace(m.Description) ? Texts.Get("no_desc") : m.Description.Trim();
+            string desc = m.NativeConfig ? Texts.Get("native_help") : fromSite ? m.SiteSummary.Trim() : string.IsNullOrWhiteSpace(m.Description) ? Texts.Get("no_desc") : m.Description.Trim();
             bool longDesc = desc.Length > 90 || desc.Contains("\n");
             string descColour = string.IsNullOrWhiteSpace(desc) || (!fromSite && string.IsNullOrWhiteSpace(m.Description)) ? "Muted" : "Ink";
             bool hasDesc = descColour == "Ink";
@@ -4265,6 +4266,10 @@ namespace QuickDeploy
             else Fact("d_order", Texts.F("d_order_v", Num(m), st.ProfilesOn ? st.Mods.Count(x => x.InProfile && !x.Loader) : st.Mods.Count(x => !x.Loader)), true);
             if (!m.Loader) Fact("d_opts", m.Options.Count > 0 ? m.Chosen + " / " + m.Choices : "—");
             Fact("d_folder", m.Path, true, true);
+            if (m.NativeConfig)
+            {
+                Fact("native_targets", string.Join(", ", m.NativeTargets), true, true);
+            }
             {
                 // remove from the library, and open the folder. A row that does not fit wraps onto
                 // the next line rather than cutting off the first button (the user, 2026-10-26); each
@@ -4359,8 +4364,8 @@ namespace QuickDeploy
             // only what the cards above do not say (the user, 2026-10-26: no repeats): how it sits in
             // the game while deployed; off, or waiting for a deploy, the card above says so. The
             // number of its files is at the top of the details
-            bool deployed = m.Enabled && m.Changes == 0 && m.Files.Count > 0;
-            if (deployed) Pair("di_mode", Texts.Get(m.Status == "link" ? "mode_link" : m.Status == "partial" ? "mode_partial" : "mode_copy"));
+            bool deployed = m.Enabled && m.Changes == 0 && (m.Files.Count > 0 || m.NativeConfig);
+            if (deployed) Pair("di_mode", Texts.Get(m.NativeConfig ? "native_mode" : m.Status == "link" ? "mode_link" : m.Status == "partial" ? "mode_partial" : "mode_copy"));
             Pair("di_lib", Texts.Size(m.LibraryBytes), "Ink", true);
             if (deployed)
             {
@@ -4375,6 +4380,7 @@ namespace QuickDeploy
         UIElement Changes(ModRow m)
         {
             var box = new StackPanel { Margin = new Thickness(0, 20, 0, 0) };
+            if (m.NativeConfig) box.Children.Add(Small(Texts.Get(m.NativeChanged > 0 ? "native_pending" : "native_synced"), new Thickness(0, 0, 0, 8)));
             long keep = m.Files.Where(f => f.Action == "keep").Sum(f => f.Bytes);
             long move = m.Files.Where(f => f.Action == "move").Sum(f => f.Bytes);
             long write = m.Files.Where(f => f.Action == "write").Sum(f => f.Bytes);
@@ -6329,7 +6335,7 @@ namespace QuickDeploy
         {
             var r = Hd2Mod.Deploy.Run(Library.Load(), Store.GameDir());
             return Texts.F("deployed", Texts.N(r.Kept), Texts.N(r.Moved), Texts.N(r.Written), Texts.N(r.Linked), Texts.N(r.Copied),
-                           Texts.N(r.Deleted), Texts.N(r.Files));
+                           Texts.N(r.Deleted), Texts.N(r.Files)) + (r.NativeWritten > 0 ? Texts.F("native_done", r.NativeWritten) : "");
         }), true);
 
         /// <summary>The game through Steam; changes not deployed yet are deployed first,
