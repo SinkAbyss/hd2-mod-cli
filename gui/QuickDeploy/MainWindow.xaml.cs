@@ -6383,8 +6383,9 @@ namespace QuickDeploy
                 line.Children.Add(pic);
                 if (m.Id == now)
                 {
-                    var tag = new Border { Background = B("Yellow"), Padding = new Thickness(6, 1, 6, 1), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
-                                          Child = new TextBlock { Text = Texts.Get("pick_now"), FontSize = 11, FontWeight = FontWeights.Bold, Foreground = B("TapeInk") } };
+                    // the size of the words around it (the user, 2026-10-27: 11 was too small to read)
+                    var tag = new Border { Background = B("Yellow"), Padding = new Thickness(8, 2, 8, 2), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
+                                          Child = new TextBlock { Text = Texts.Get("pick_now"), FontSize = 13, FontWeight = FontWeights.Bold, Foreground = B("TapeInk") } };
                     DockPanel.SetDock(tag, Dock.Right);
                     line.Children.Add(tag);
                 }
