@@ -1396,6 +1396,11 @@ namespace QuickDeploy
         bool Refused(CliResult r)
         {
             if (r.Ok) return false;
+#if HAS_NEXUS
+            bool said = false;
+            OurRefusal(r, ref said);
+            if (said) return false;
+#endif
             switch (r.Refused?.Kind)
             {
                 case "no_game":
@@ -2365,11 +2370,9 @@ namespace QuickDeploy
             top.Children.Add(c1);
 
             var keyPanel = new StackPanel();
-            if (NexusOAuth.ClientId != null) SignInCard(keyPanel);
-            else
-            {
-            SignInCard(keyPanel);          // no sign-in id in this build: it says so
-            }
+            bool drawn = false;
+            if (NexusOAuth.ClientId == null) OurConnectCard(keyPanel, ref drawn);
+            if (!drawn) SignInCard(keyPanel);          // with no sign-in id in this build, it says so
             var c2 = Card(keyPanel);
             Grid.SetColumn(c2, 2);
             top.Children.Add(c2);
@@ -2522,6 +2525,11 @@ namespace QuickDeploy
         /// <summary>Why a download failed, in the window's words.</summary>
         static string Why(string kind)
         {
+#if HAS_NEXUS
+            string why = null;
+            OurWhy(kind, ref why);
+            if (why != null) return why;
+#endif
             switch (kind)
             {
 #if HAS_NEXUS
@@ -3452,9 +3460,19 @@ namespace QuickDeploy
         async Task<bool> AskKey()
         {
             if (NexusOAuth.ClientId != null) return await SignIn();
+            Func<Task<bool>> other = null;
+            OurConnect(ref other);
+            if (other != null) return await other();
             Dialog.Tell(this, Texts.Get("nx_no_client"));
             return false;
         }
+
+        // What only our own builds show is in private/ (not in the repository), each through one
+        // of these; a build without it has none of them, and the compiler leaves their calls out.
+        partial void OurRefusal(CliResult r, ref bool said);
+        partial void OurConnectCard(StackPanel panel, ref bool drawn);
+        partial void OurConnect(ref Func<Task<bool>> connect);
+        static partial void OurWhy(string kind, ref string why);
 #endif
 
 #if HAS_NEXUS

@@ -519,7 +519,7 @@ namespace Hd2Mod.Tests
     }
 
     /// <summary>Downloads and update checks against fakes of the sites on localhost.</summary>
-    public class OnlineSources : Fixture
+    public partial class OnlineSources : Fixture
     {
         readonly System.Net.HttpListener server = new System.Net.HttpListener();
         readonly string baseUrl;
@@ -552,6 +552,10 @@ namespace Hd2Mod.Tests
             return ms.ToArray();
         }
 
+        // the fake's part for what only our own builds send, in private/ (not in the repository)
+        partial void OurAuth(System.Net.HttpListenerRequest request, ref bool authed);
+        partial void OurAnswer(string path, ref byte[] body);
+
         void Serve()
         {
             while (server.IsListening)
@@ -563,6 +567,9 @@ namespace Hd2Mod.Tests
 #if HAS_NEXUS
                 lock (Seen) Seen.Add(path + " " + c.Request.Headers["Application-Name"]);
                 bool authed = (c.Request.Headers["Authorization"] ?? "").StartsWith("Bearer ey");
+                OurAuth(c.Request, ref authed);
+                byte[] ours = null;
+                if (authed) OurAnswer(path, ref ours);
                 var m = Regex.Match(path, @"^/v1/games/helldivers2/mods/77/files/(\d+)(/download_link)?\.json$");
 #endif
                 int status = 200;
@@ -597,6 +604,7 @@ namespace Hd2Mod.Tests
                 else if (!authed) { status = 401; body = Bytes("{\"message\":\"bad key\"}"); }
                 // mods 500 and up: the rate limit is used up
                 else if (Regex.IsMatch(path, @"^/v1/games/helldivers2/mods/5\d\d/")) { status = 429; body = Bytes("{\"message\":\"rate limited\"}"); }
+                else if (ours != null) body = ours;
                 else if (path == "/v1/games/helldivers2/mods/77.json")
                     body = Bytes("{\"name\": \"Cape Colours on Nexus\", \"author\": \"Capey\", \"summary\": \"Capes in every colour.\", \"version\": \"2.0\"}");
                 else if (m.Success && m.Groups[2].Success)

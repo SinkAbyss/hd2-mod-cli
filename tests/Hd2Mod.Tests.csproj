@@ -21,6 +21,9 @@
 
   <ItemGroup>
     <Compile Include="..\core\*.cs" Link="core\%(Filename)%(Extension)" />
+    <!-- our own builds' part and its tests, kept out of the repository (.gitignore) -->
+    <Compile Include="..\private\core\*.cs" Link="private\core\%(Filename)%(Extension)" />
+    <Compile Include="..\private\tests\*.cs" Link="private\tests\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

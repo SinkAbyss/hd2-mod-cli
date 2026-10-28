@@ -6,7 +6,7 @@ using Hd2Mod;
 namespace QuickDeploy
 {
     /// <summary>The window's own words, (English, Chinese); Chinese when Windows is.</summary>
-    public static class Texts
+    public static partial class Texts
     {
         public static bool Zh = Language();
 
@@ -105,6 +105,10 @@ namespace QuickDeploy
             }
             catch (System.Exception e) when (e is System.IO.IOException || e is System.FormatException || e is System.UnauthorizedAccessException) { }
         }
+
+        // the words only our own builds use, from their part in private/ (not in the repository)
+        static Texts() => OurWords(T);
+        static partial void OurWords(Dictionary<string, (string En, string Zh)> t);
 
         static readonly Dictionary<string, (string En, string Zh)> T = new Dictionary<string, (string, string)>
         {

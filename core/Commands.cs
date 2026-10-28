@@ -7,7 +7,7 @@ namespace Hd2Mod
 {
     /// <summary>The command line: hd2qd COMMAND [ARGS]. The window runs the same commands
     /// in its own process.</summary>
-    public static class Commands
+    public static partial class Commands
     {
         class Spec
         {
@@ -155,6 +155,10 @@ namespace Hd2Mod
         };
 
         static KeyValuePair<string, Spec> Cmd(string name, Spec s) => new KeyValuePair<string, Spec>(name, s);
+
+        // the commands only our own builds have, from their part in private/ (not in the repository)
+        static Commands() => OurCommands(Specs);
+        static partial void OurCommands(List<KeyValuePair<string, Spec>> specs);
 
         static string Usage() =>
             "usage: hd2qd [--version] {" + string.Join(",", Specs.Select(s => s.Key)) + "} ...";
