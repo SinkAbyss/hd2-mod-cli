@@ -2524,7 +2524,6 @@ namespace QuickDeploy
                 Downloads.Children.Add(Card(list));
             }
         }
-#endif
 
         // the look-up by number: what the box held, what was found or why nothing was, while
         // the page is drawn anew
@@ -2630,6 +2629,7 @@ namespace QuickDeploy
             card.Children.Add(words);
             return card;
         }
+#endif
 
         /// <summary>Why a download failed, in the window's words.</summary>
         static string Why(string kind)
