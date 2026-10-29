@@ -4581,7 +4581,7 @@ namespace QuickDeploy
                 if (list.Children.Count > 0) box.Children.Add(list);
                 if (!st.ResourceNames && c.Resources.Count > 0 && Texts.Hints)
                     box.Children.Add(Small(Texts.Get("clash_no_names"), new Thickness(0, 8, 0, 0)));
-                Detail.Children.Add(new Border { BorderBrush = B(c.Same ? "Grid" : "Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(12), Margin = new Thickness(0, 16, 0, 0), Child = box });
+                Detail.Children.Add(new Border { BorderBrush = B(c.Same || c.ManagedBoot ? "Grid" : "Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(12), Margin = new Thickness(0, 16, 0, 0), Child = box });
             }
 
             // how it is deployed
