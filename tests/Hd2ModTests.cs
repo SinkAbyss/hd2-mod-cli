@@ -636,13 +636,15 @@ namespace Hd2Mod.Tests
 
         string lastGraphQL;
 
-        /// <summary>The fake GraphQL API: mod 77 is there, mod 13 makes an error, no other mod is.</summary>
+        /// <summary>The fake GraphQL API: mod 77 is there, mod 14 is there but deleted, mod 13 makes an error, no other mod is.</summary>
         string GraphQLAnswer(string request)
         {
             lastGraphQL = request;
             var ids = Json.List(Json.Obj(Json.Parse(request) as Dictionary<string, object>, "variables"), "ids").OfType<Dictionary<string, object>>().ToList();
             long id = Json.Long(ids.FirstOrDefault(), "modId");
             if (id == 13) return "{\"errors\": [{\"message\": \"Cannot query field \\\"x\\\" on type \\\"Mod\\\".\"}]}";
+            if (id == 14)
+                return "{\"data\": {\"legacyModsByDomain\": {\"nodes\": [{\"modId\": 14, \"name\": \"Walker - DELETED\", \"status\": \"wastebinned\"}]}}}";
             var nodes = id != 77 ? "[]" :
                 "[{\"modId\": 77, \"name\": \"Cape Colours on Nexus\", \"summary\": \"Capes in every colour.<br />Two lines.\", \"version\": \"2.0\", " +
                 "\"author\": \"Capey\", \"uploader\": {\"name\": \"CapeUploader\"}, \"pictureUrl\": \"https://example.invalid/cape.png\", " +
@@ -694,6 +696,9 @@ namespace Hd2Mod.Tests
         {
             Assert.Equal("nexus_missing", Refused("nexus-info", "99"));
             Assert.Equal("not_number", Refused("nexus-info", "cape"));
+            // there, but not to be downloaded: said in words (Nexus Mods' own: wastebinned)
+            Assert.Contains("not available: deleted", Cli("nexus-info", "14"));
+            Assert.False(Nexus.LookUp(14).Available);
             Assert.Equal("other_game", Refused("nexus-info", "https://www.nexusmods.com/skyrimspecialedition/mods/266"));
             // not signed in, so nothing to fall back on: Nexus Mods' own words
             var e = Assert.Throws<ModError>(() => Nexus.LookUp(13));

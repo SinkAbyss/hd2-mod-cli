@@ -24,6 +24,24 @@ namespace Hd2Mod
         /// <summary>The page's Files tab, where Mod Manager Download is.</summary>
         public string FilesPage => Page + "?tab=files";
         public bool Available => Status == null || string.Equals(Status, "published", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Why it cannot be downloaded, in words. What Nexus Mods answers for Helldivers 2's
+        /// mods (2026-10-29): published, not_published, hidden, removed, wastebinned, under_moderation.</summary>
+        public string StatusWords
+        {
+            get
+            {
+                switch (Status)
+                {
+                    case "not_published": return "not published yet";
+                    case "hidden": return "hidden by its author";
+                    case "removed": return "removed";
+                    case "wastebinned": return "deleted";
+                    case "under_moderation": return "under moderation";
+                    default: return Status;
+                }
+            }
+        }
     }
 
     // Mods are passed around by their number alone in Chinese-speaking groups ("N站16662"; the user,

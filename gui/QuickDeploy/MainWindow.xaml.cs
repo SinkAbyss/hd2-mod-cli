@@ -2610,7 +2610,7 @@ namespace QuickDeploy
             if (m.Adult) meta.Add(Texts.Get("dl_find_adult"));
             words.Children.Add(Small(string.Join("  ·  ", meta), new Thickness(0, 4, 0, 0)));
             if (!m.Available)
-                words.Children.Add(new TextBlock { Text = Texts.F("dl_find_status", m.Status), Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+                words.Children.Add(new TextBlock { Text = Texts.F("dl_find_status", Texts.Has("nx_st_" + m.Status) ? Texts.Get("nx_st_" + m.Status) : m.Status), Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
             if (m.Summary != null)
                 words.Children.Add(new TextBlock { Text = m.Summary, Foreground = B("Ink"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
             words.Children.Add(Code(m.Page));

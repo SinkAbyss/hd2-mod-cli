@@ -874,7 +874,7 @@ namespace Hd2Mod
             if (m.Updated > 0) by.Add("updated " + DateTimeOffset.FromUnixTimeSeconds(m.Updated).LocalDateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
             if (by.Count > 0) o.WriteLine("  " + string.Join(" · ", by));
             o.WriteLine("  " + m.Downloads.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " downloads · " + m.Endorsements.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " endorsements" +
-                        (m.Adult ? " · adult content" : "") + (m.Available ? "" : " · not available: " + m.Status));
+                        (m.Adult ? " · adult content" : "") + (m.Available ? "" : " · not available: " + m.StatusWords));
             o.WriteLine("  page:  " + m.Page);
             o.WriteLine("  files: " + m.FilesPage);
             if (m.Summary != null) o.WriteLine("  " + m.Summary.Replace("\n", "\n  "));
