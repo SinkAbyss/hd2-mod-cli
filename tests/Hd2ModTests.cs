@@ -597,6 +597,9 @@ namespace Hd2Mod.Tests
                                    .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p.Length > 1 ? p[1].Replace('+', ' ') : ""));
                     (status, body) = OAuthToken(form);
                 }
+                // Nexus: the public GraphQL API (v2), asked without signing in
+                else if (path == "/v2/graphql" && c.Request.HttpMethod == "POST")
+                    body = Bytes(GraphQLAnswer(new StreamReader(c.Request.InputStream).ReadToEnd()));
                 else if (path == "/v1/games/helldivers2/mods/77/files.json" && authed)
                     body = Bytes("{\"files\": [{\"file_id\": 1, \"version\": \"1.0\", \"category_name\": \"OLD_VERSION\", \"uploaded_timestamp\": 1700000000}, " +
                                  "{\"file_id\": 2, \"version\": \"2.0\", \"category_name\": \"MAIN\", \"uploaded_timestamp\": 1750000000}], " +
@@ -630,6 +633,73 @@ namespace Hd2Mod.Tests
 #if HAS_NEXUS
         static string Link(int file, bool withKey = true) =>
             "nxm://helldivers2/mods/77/files/" + file + (withKey ? "?key=abc%2Bd&expires=1700000000&user_id=5" : "");
+
+        string lastGraphQL;
+
+        /// <summary>The fake GraphQL API: mod 77 is there, mod 13 makes an error, no other mod is.</summary>
+        string GraphQLAnswer(string request)
+        {
+            lastGraphQL = request;
+            var ids = Json.List(Json.Obj(Json.Parse(request) as Dictionary<string, object>, "variables"), "ids").OfType<Dictionary<string, object>>().ToList();
+            long id = Json.Long(ids.FirstOrDefault(), "modId");
+            if (id == 13) return "{\"errors\": [{\"message\": \"Cannot query field \\\"x\\\" on type \\\"Mod\\\".\"}]}";
+            var nodes = id != 77 ? "[]" :
+                "[{\"modId\": 77, \"name\": \"Cape Colours on Nexus\", \"summary\": \"Capes in every colour.<br />Two lines.\", \"version\": \"2.0\", " +
+                "\"author\": \"Capey\", \"uploader\": {\"name\": \"CapeUploader\"}, \"pictureUrl\": \"https://example.invalid/cape.png\", " +
+                "\"updatedAt\": \"2026-10-01T12:00:00Z\", \"endorsements\": 1234, \"downloads\": 56789, \"adultContent\": false, \"status\": \"published\"}]";
+            return "{\"data\": {\"legacyModsByDomain\": {\"nodes\": " + nodes + "}}}";
+        }
+
+        /// <summary>A mod's number as players pass it around, or its page (the user, 2026-10-29).</summary>
+        [Fact]
+        public void ANexusNumberIsFoundInWhatIsTyped()
+        {
+            foreach (var typed in new[] { "16662", " 16662 ", "#16662", "N站16662", "N站 16662", "编号16662", "16662号",
+                                          "https://www.nexusmods.com/helldivers2/mods/16662", "https://www.nexusmods.com/helldivers2/mods/16662?tab=files",
+                                          "nexusmods.com/HellDivers2/mods/16662" })
+                Assert.Equal(16662L, Nexus.ModNumber(typed));
+            foreach (var typed in new[] { "", "   ", "abc", "12 34", "0", "v1.2", "https://www.nexusmods.com/helldivers2" })
+                Assert.Null(Nexus.ModNumber(typed));
+            Assert.Equal("other_game", Assert.Throws<ModError>(() => Nexus.ModNumber("https://www.nexusmods.com/skyrimspecialedition/mods/266")).Kind);
+        }
+
+        [Fact]
+        public void ANumberIsLookedUpWithoutSigningIn()
+        {
+            Assert.Null(Nexus.Credential());
+            lock (Seen) Seen.Clear();
+            var m = Nexus.LookUp(77);
+            Assert.Equal(("Cape Colours on Nexus", "Capey", "CapeUploader", "2.0"), (m.Name, m.Author, m.Uploader, m.Version));
+            Assert.Equal("Capes in every colour.\nTwo lines.", m.Summary);
+            Assert.Equal((56789L, 1234L, false, true), (m.Downloads, m.Endorsements, m.Adult, m.Available));
+            Assert.Equal(DateTimeOffset.Parse("2026-10-01T12:00:00Z").ToUnixTimeSeconds(), m.Updated);
+            Assert.Equal("https://www.nexusmods.com/helldivers2/mods/77?tab=files", m.FilesPage);
+            Assert.Contains("\"gameDomain\":\"helldivers2\"", lastGraphQL.Replace(" ", ""));
+            lock (Seen) Assert.Contains("/v2/graphql " + Nexus.AppName, Seen);
+
+            var said = Cli("nexus-info", "N站77");
+            Assert.Contains("Cape Colours on Nexus  (Nexus 77)", said);
+            Assert.Contains("by Capey (uploaded by CapeUploader) · version 2.0", said);
+            Assert.Contains("56,789 downloads · 1,234 endorsements", said);
+            Assert.Contains("files: https://www.nexusmods.com/helldivers2/mods/77?tab=files", said);
+            Assert.Contains("not in the library", said);
+            var lib = Library.Load();
+            lib.Mods.Add(UpdatesMod());
+            lib.Save();
+            Assert.Contains("in the library: Cape", Cli("nexus-info", "https://www.nexusmods.com/helldivers2/mods/77"));
+        }
+
+        [Fact]
+        public void ALookUpSaysWhyItFoundNothing()
+        {
+            Assert.Equal("nexus_missing", Refused("nexus-info", "99"));
+            Assert.Equal("not_number", Refused("nexus-info", "cape"));
+            Assert.Equal("other_game", Refused("nexus-info", "https://www.nexusmods.com/skyrimspecialedition/mods/266"));
+            // not signed in, so nothing to fall back on: Nexus Mods' own words
+            var e = Assert.Throws<ModError>(() => Nexus.LookUp(13));
+            Assert.Equal("nexus_error", e.Kind);
+            Assert.Contains("Cannot query field", e.Message);
+        }
 
         [Fact]
         public void LinkIsRead()

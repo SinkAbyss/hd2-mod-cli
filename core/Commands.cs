@@ -97,6 +97,8 @@ namespace Hd2Mod
             Cmd("nexus-login", new Spec { Help = "sign in to Nexus Mods: your browser opens Nexus Mods' page, where you allow this program (OAuth with PKCE)",
                                           Run = NexusLoginCmd }),
             Cmd("nexus-logout", new Spec { Help = "sign out of Nexus Mods here (the access can also be taken back on Nexus Mods)", Run = NexusLogoutCmd }),
+            Cmd("nexus-info", new Spec { Help = "a mod on Nexus Mods by its number (16662, N站16662) or its page: its name, author, version, page, and whether the library has it (read only; no sign-in needed)",
+                                         Positionals = new[] { "number" }, Run = NexusInfoCmd }),
             Cmd("check-updates", new Spec { Help = "check every mod for a newer version on its own channel (Nexus Mods when signed in, GitHub releases)", Run = CheckUpdatesCmd }),
             Cmd("update", new Spec { Help = "download a mod's newer version from GitHub (or Nexus Mods, premium accounts) and put it in the library", Positionals = new[] { "mod" }, Run = UpdateCmd }),
 #else
@@ -193,7 +195,7 @@ namespace Hd2Mod
         /// record or the game folder.</summary>
         static readonly HashSet<string> ReadOnly = new HashSet<string>
         {
-            "folders", "list", "tags", "groups", "status", "check", "which", "state", "conflicts", "profiles", "report",
+            "folders", "list", "tags", "groups", "status", "check", "which", "state", "conflicts", "profiles", "report", "nexus-info",
         };
 
         static bool Writes(string command, Args a) =>
@@ -859,6 +861,26 @@ namespace Hd2Mod
 #endif
 
 #if HAS_NEXUS
+
+        static void NexusInfoCmd(Args a, TextWriter o)
+        {
+            var n = Nexus.ModNumber(a.Pos["number"]);
+            if (n == null) throw new ModError("not a Nexus Mods number or page: " + a.Pos["number"], "not_number", a.Pos["number"]);
+            var m = Nexus.LookUp(n.Value);
+            o.WriteLine((m.Name ?? "?") + "  (Nexus " + m.Mod + ")");
+            var by = new List<string>();
+            if (m.Author != null) by.Add("by " + m.Author + (m.Uploader != null && m.Uploader != m.Author ? " (uploaded by " + m.Uploader + ")" : ""));
+            if (m.Version != null) by.Add("version " + m.Version);
+            if (m.Updated > 0) by.Add("updated " + DateTimeOffset.FromUnixTimeSeconds(m.Updated).LocalDateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+            if (by.Count > 0) o.WriteLine("  " + string.Join(" · ", by));
+            o.WriteLine("  " + m.Downloads.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " downloads · " + m.Endorsements.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " endorsements" +
+                        (m.Adult ? " · adult content" : "") + (m.Available ? "" : " · not available: " + m.Status));
+            o.WriteLine("  page:  " + m.Page);
+            o.WriteLine("  files: " + m.FilesPage);
+            if (m.Summary != null) o.WriteLine("  " + m.Summary.Replace("\n", "\n  "));
+            var had = Library.Load().Mods.FirstOrDefault(x => x.Nexus != null && x.Nexus.Game == Nexus.Game && x.Nexus.Mod == m.Mod);
+            o.WriteLine(had != null ? "in the library: " + had.Name : "not in the library");
+        }
 
         static void NexusLoginCmd(Args a, TextWriter o)
         {

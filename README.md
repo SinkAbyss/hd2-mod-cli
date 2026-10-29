@@ -241,6 +241,12 @@ In builds with the Nexus Mods part (ours, and `build.bat --with-nexus`):
   program once it is the program for those links (one button on the Download
   page takes them, another gives them back to the program that had them).
   Premium accounts can also update a mod from the list directly.
+- **By number.** A mod's number alone (`16662`, as it is often passed around,
+  also `N站16662`) or its page's address, typed in *Find by Nexus number* on the
+  Download page, shows what its page says: name, author, version, numbers and
+  words, and whether the library has it already, with a button to its Files tab.
+  It needs no sign-in (Nexus Mods' public GraphQL API). `hd2qd nexus-info 16662`
+  says the same.
 - **Requests.** Every request follows something you clicked, and carries this
   program's name and version. Nothing is asked of Nexus Mods at start-up or in
   the background.
@@ -560,6 +566,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 - **登录**：在“下载”页面点击“登录 Nexus Mods”，会在浏览器中打开 Nexus Mods 自己的页面，在那里允许本程序即可（OAuth 2.0 + PKCE）。本程序不会接触你的密码。登录信息仅保存在本机，以你的 Windows 账户加密，并会自动续期。“退出登录”只在本机删除登录信息；也可以在 Nexus Mods 网站上收回本程序的访问权限。
 - **下载**：本程序接管“Mod Manager Download”链接后，网站上的这个按钮会把文件交给本程序（“下载”页面上一个按钮用于接管，另一个用于交还给原来的程序）。高级会员还可以在列表中直接更新 mod。
+- **按编号查找**：在“下载”页面的“按 Nexus 编号查找”中输入 mod 编号（如 `16662`、`N站16662`）或 mod 页面地址，即可看到该 mod 页面上的名称、作者、版本、下载与点赞数、简介，以及是否已在 mod 库中，并可一键前往其 Files 页面下载。无需登录（使用 Nexus Mods 的公开 GraphQL 接口）。命令行为 `hd2qd nexus-info 16662`。
 - **请求**：每次请求都由你的操作发起，并带有本程序的名称和版本。启动时和后台都不会向 Nexus Mods 发送请求。
 
 ### LUA MOD 部署前检查

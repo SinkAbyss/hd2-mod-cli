@@ -2378,6 +2378,10 @@ namespace QuickDeploy
             top.Children.Add(c2);
             Downloads.Children.Add(top);
 
+            // a mod by its number, as players pass it around (the user, 2026-10-29: "N站16662")
+            Downloads.Children.Add(Card(FindByNumber(ours)));
+            Downloads.Children.Add(new Border { Height = 20 });
+
             // where downloads go: the default mod folder, chosen on the storage page
             var where = new DockPanel();
             var change = new Button { Content = Texts.Get("dl_where_change"), Style = (Style)FindResource("Ghost"), MinHeight = 36, VerticalAlignment = VerticalAlignment.Center };
@@ -2521,6 +2525,111 @@ namespace QuickDeploy
             }
         }
 #endif
+
+        // the look-up by number: what the box held, what was found or why nothing was, while
+        // the page is drawn anew
+        string findTyped, findSaid;
+        NexusModInfo found;
+        bool finding;
+
+        /// <summary>The download page's look-up: a Nexus Mods number or page typed or pasted, what
+        /// the mod's page says, and the way to its Files tab, where Mod Manager Download is.</summary>
+        UIElement FindByNumber(bool ours)
+        {
+            var panel = new StackPanel();
+            panel.Children.Add(Heading(Texts.Get("dl_find")));
+            if (Texts.Hints) panel.Children.Add(Small(Texts.Get("dl_find_n"), new Thickness(0, 4, 0, 0)));
+            var row = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+            var go = new Button { Content = Texts.Get("dl_find_do"), Style = (Style)FindResource("Primary"), MinHeight = 40, Margin = new Thickness(8, 0, 0, 0), IsEnabled = !finding };
+            DockPanel.SetDock(go, Dock.Right);
+            row.Children.Add(go);
+            var box = new TextBox { Style = (Style)FindResource("Input"), Tag = Texts.Get("dl_find_ph"), Text = findTyped ?? "" };
+            row.Children.Add(box);
+            panel.Children.Add(row);
+
+            async void Find()
+            {
+                if (finding) return;
+                findTyped = box.Text;
+                found = null;
+                long? n;
+                try { n = Nexus.ModNumber(box.Text); }
+                catch (ModError e) { findSaid = Texts.F("dl_find_other", e.Arg); RenderDownloads(); return; }
+                if (n == null) { findSaid = Texts.Get("dl_find_none"); RenderDownloads(); return; }
+                finding = true;
+                findSaid = null;
+                RenderDownloads();
+                NexusModInfo got = null;
+                var r = await Task.Run(() => Cli.Call(() => { got = Nexus.LookUp(n.Value); return ""; }));
+                finding = false;
+                var kind = r.Refused?.Kind;
+                if (r.Ok) found = got;
+                else if (kind == "nexus_missing") findSaid = Texts.F("dl_find_missing", n.Value);
+                else findSaid = kind != null && Why(kind) != kind ? Why(kind) : Texts.F("failed", r.Message);
+                RenderDownloads();
+            }
+            go.Click += (s, e) => Find();
+            box.KeyDown += (s, e) => { if (e.Key == Key.Enter) { e.Handled = true; Find(); } };
+
+            if (finding) panel.Children.Add(Small(Texts.Get("dl_find_busy"), new Thickness(0, 12, 0, 0)));
+            else if (findSaid != null)
+                panel.Children.Add(new TextBlock { Text = findSaid, Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) });
+            else if (found != null) panel.Children.Add(Found(found, ours));
+            return panel;
+        }
+
+        /// <summary>What a mod's page says: its picture (none for adult content), name, author,
+        /// version, numbers and words, its address, whether the library has it, and the buttons
+        /// to its page and its Files tab.</summary>
+        UIElement Found(NexusModInfo m, bool ours)
+        {
+            var card = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
+            if (!m.Adult && Uri.TryCreate(m.Picture ?? "", UriKind.Absolute, out var pic) && pic.Scheme == Uri.UriSchemeHttps)
+            {
+                var frame = new Border { Width = 192, Height = 108, Margin = new Thickness(0, 0, 16, 0), Background = B("Ground700"), VerticalAlignment = VerticalAlignment.Top, ClipToBounds = true };
+                try
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource = pic;
+                    bmp.DecodePixelWidth = 384;
+                    bmp.EndInit();
+                    frame.Child = new Image { Source = bmp, Stretch = Stretch.UniformToFill };
+                }
+                catch (Exception e) when (e is NotSupportedException || e is IOException || e is InvalidOperationException) { }
+                DockPanel.SetDock(frame, Dock.Left);
+                card.Children.Add(frame);
+            }
+            var words = new StackPanel();
+            words.Children.Add(Heading((m.Name ?? "?") + "  ·  Nexus " + m.Mod));
+            var meta = new List<string>();
+            if (m.Author != null) meta.Add(Texts.F("dl_find_by", m.Author));
+            if (m.Version != null) meta.Add(Texts.F("dl_find_version", m.Version));
+            if (m.Updated > 0) meta.Add(Texts.F("dl_find_updated", DateTimeOffset.FromUnixTimeSeconds(m.Updated).LocalDateTime.ToString("yyyy-MM-dd")));
+            meta.Add(Texts.F("dl_find_stats", m.Downloads.ToString("N0"), m.Endorsements.ToString("N0")));
+            if (m.Adult) meta.Add(Texts.Get("dl_find_adult"));
+            words.Children.Add(Small(string.Join("  ·  ", meta), new Thickness(0, 4, 0, 0)));
+            if (!m.Available)
+                words.Children.Add(new TextBlock { Text = Texts.F("dl_find_status", m.Status), Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+            if (m.Summary != null)
+                words.Children.Add(new TextBlock { Text = m.Summary, Foreground = B("Ink"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+            words.Children.Add(Code(m.Page));
+            var have = st?.Mods.FirstOrDefault(x => x.NexusMod == m.Mod);
+            if (have != null)
+                words.Children.Add(new TextBlock { Text = Texts.F("dl_find_have", have.Name), Foreground = B("Blue"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+            var btns = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
+            var files = new Button { Content = Texts.Get("dl_find_files"), Style = (Style)FindResource("Primary"), MinHeight = 36, IsEnabled = m.Available };
+            files.Click += (s, e) => Process.Start(new ProcessStartInfo(m.FilesPage) { UseShellExecute = true });
+            btns.Children.Add(files);
+            var page = new Button { Content = Texts.Get("dl_find_page"), Style = (Style)FindResource("Ghost"), MinHeight = 36, Margin = new Thickness(8, 0, 0, 0) };
+            page.Click += (s, e) => Process.Start(new ProcessStartInfo(m.Page) { UseShellExecute = true });
+            btns.Children.Add(page);
+            words.Children.Add(btns);
+            // Mod Manager Download there comes back here only while the button is ours
+            if (m.Available) words.Children.Add(Small(Texts.Get(ours ? "dl_find_files_n" : "dl_find_take"), new Thickness(0, 6, 0, 0)));
+            card.Children.Add(words);
+            return card;
+        }
 
         /// <summary>Why a download failed, in the window's words.</summary>
         static string Why(string kind)
