@@ -241,6 +241,12 @@ In builds with the Nexus Mods part (ours, and `build.bat --with-nexus`):
   program once it is the program for those links (one button on the Download
   page takes them, another gives them back to the program that had them).
   Premium accounts can also update a mod from the list directly.
+- **By number.** A mod's number alone (`16662`, as it is often passed around,
+  also `N站16662`) or its page's address, typed in *Find by Nexus number* on the
+  Download page, shows what its page says: name, author, version, numbers and
+  words, and whether the library has it already, with a button to its Files tab.
+  It needs no sign-in (Nexus Mods' public GraphQL API). `hd2qd nexus-info 16662`
+  says the same.
 - **Requests.** Every request follows something you clicked, and carries this
   program's name and version. Nothing is asked of Nexus Mods at start-up or in
   the background.
@@ -282,6 +288,9 @@ All of it is read outside the game, before a deploy: nothing runs in the game. T
   the next start); until one is chosen, it follows Windows.
 - `HD2 Mod Quick Deploy.exe --select TEXT` opens the first mod whose name holds
   TEXT.
+- **Asking about a problem?** Settings → *Problem report* → *Export problem
+  report* writes one zip to the desktop and puts a short summary on the
+  clipboard: send the zip with your question (`hd2qd report` does the same).
 - **hd2qd can be run by an AI assistant.** Everything is kept in
   `%USERPROFILE%\.hd2-mod-cli`, not in AppData: a program started by a packaged
   app (most desktop AI assistants are) has a folder it makes under `%APPDATA%`
@@ -343,6 +352,7 @@ A change made on the command line shows in an open window half a second later.
 | `lua-syntax FILE...` | Whether Lua files compile on the game's Lua (PUC 5.1, no LuaJIT): OK, or the line and why. |
 | `conflicts [-v]` | Resources that more than one mod ships, and which one wins; the ones every mod ships byte for byte alike are named as shared, not as a conflict. `-v` lists each resource's type and id, and its name from HD2SDK's name list when HD2SDK is installed. |
 | `state [--verify]` | Everything the window shows, as JSON. |
+| `report [--out PATH]` | A zip to send with a question (on the desktop unless `--out`): the state, the settings, the deploy history, the Nexus Mods download history, Boot Mod Loader's log and the names of the game's crash dumps. Never the dumps themselves and never the sign-in; your user folder is written as `%USERPROFILE%`. A short summary is printed too. |
 
 `MOD` is the mod's number in `list`, its name, or a unique part of its name.
 
@@ -556,6 +566,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 
 - **登录**：在“下载”页面点击“登录 Nexus Mods”，会在浏览器中打开 Nexus Mods 自己的页面，在那里允许本程序即可（OAuth 2.0 + PKCE）。本程序不会接触你的密码。登录信息仅保存在本机，以你的 Windows 账户加密，并会自动续期。“退出登录”只在本机删除登录信息；也可以在 Nexus Mods 网站上收回本程序的访问权限。
 - **下载**：本程序接管“Mod Manager Download”链接后，网站上的这个按钮会把文件交给本程序（“下载”页面上一个按钮用于接管，另一个用于交还给原来的程序）。高级会员还可以在列表中直接更新 mod。
+- **按编号查找**：在“下载”页面的“按 Nexus 编号查找”中输入 mod 编号（如 `16662`、`N站16662`）或 mod 页面地址，即可看到该 mod 页面上的名称、作者、版本、下载与点赞数、简介，以及是否已在 mod 库中，并可一键前往其 Files 页面下载。无需登录（使用 Nexus Mods 的公开 GraphQL 接口）。命令行为 `hd2qd nexus-info 16662`。
 - **请求**：每次请求都由你的操作发起，并带有本程序的名称和版本。启动时和后台都不会向 Nexus Mods 发送请求。
 
 ### LUA MOD 部署前检查
@@ -585,6 +596,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 - **请勿直接修改游戏目录中已部署的 patch 文件**：硬链接与 mod 库中的文件为同一文件，修改会同时影响 mod 库。恢复原版不影响 mod 库。
 - 游戏运行时无法部署或恢复原版。
 - 界面语言为本程序独立的设置（设置窗口中选择，下次启动时保留）；未设置时跟随 Windows 的语言。
+- **反馈问题时**：在设置页“问题反馈”中点击“导出诊断包”，桌面上会生成一个 zip 文件，简要摘要同时复制到剪贴板；提问时附上该 zip 即可（命令行为 `hd2qd report`）。诊断包不含崩溃转储和 Nexus Mods 登录信息，Windows 用户文件夹会写成 `%USERPROFILE%`。
 - **hd2qd 可以由 AI 助手调用。** 所有数据保存在 `%USERPROFILE%\.hd2-mod-cli`，而不是 AppData：由打包应用（多数桌面版 AI 助手都是）启动的程序，在 `%APPDATA%` 下新建的文件夹会被 Windows 放进该应用的私有目录，其他程序都读不到，mod 库会在没有任何报错的情况下分成两份。如果仍将 `HD2MOD_HOME` 设在 AppData 下，hd2qd 会在写入前检查，并拒绝执行、说明写入本会落在何处。
 
 ### 命令行 hd2qd
@@ -598,6 +610,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
     hd2qd check-updates      # 检查来自 GitHub 的 mod 是否有新版本
     hd2qd lua                # 部署前检查 Lua mod：启动脚本、加载器、无法运行的脚本、上一局、上次崩溃
     hd2qd self-update        # 检查本程序是否有新版本（正式版只看正式发布，开发版也看预发布）
+    hd2qd report             # 导出诊断包（zip，默认在桌面），反馈问题时附上
     hd2qd deploy
 
 完整命令列表见英文部分的表格。设置与记录保存在 `%USERPROFILE%\.hd2-mod-cli`。每个文件保存时会把上一版留为同名的 `.bak`：mod 可以重新下载，而你的选择（哪些 mod、顺序、可选内容、标签）不能，且只有几十 KB。需要回退时，把 `.bak` 改名覆盖原文件即可。

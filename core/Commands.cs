@@ -7,7 +7,7 @@ namespace Hd2Mod
 {
     /// <summary>The command line: hd2qd COMMAND [ARGS]. The window runs the same commands
     /// in its own process.</summary>
-    public static class Commands
+    public static partial class Commands
     {
         class Spec
         {
@@ -80,12 +80,25 @@ namespace Hd2Mod
             Cmd("tag-new", new Spec { Help = "make a label, before any mod carries it", Positionals = new[] { "name" }, Run = TagNew }),
             Cmd("tag-rename", new Spec { Help = "rename a label everywhere it is used", Positionals = new[] { "name", "to" }, Run = TagRename }),
             Cmd("tag-delete", new Spec { Help = "take a label off every mod", Positionals = new[] { "name" }, Run = TagDelete }),
+            Cmd("groups", new Spec { Help = "the player's groups, up to " + Groups.Depth + " levels, with their mods (shown only: no file moves, the deploy is the same)", Run = GroupList }),
+            Cmd("group-new", new Spec { Help = "make a group, at the top or --in another (a group is a name or a path such as Looks/Armour)",
+                                        Positionals = new[] { "name" }, Values = new[] { "--in" }, Run = GroupNew }),
+            Cmd("group-rename", new Spec { Help = "rename a group", Positionals = new[] { "group", "name" }, Run = GroupRename }),
+            Cmd("group-move", new Spec { Help = "move a group, with what it holds, --in another or to the --top",
+                                         Positionals = new[] { "group" }, Values = new[] { "--in" }, Flags = new[] { "--top" },
+                                         OneOf = new[] { "--in", "--top" }, Run = GroupMove }),
+            Cmd("group-delete", new Spec { Help = "delete a group: its mods and groups go up into the group around it", Positionals = new[] { "group" }, Run = GroupDelete }),
+            Cmd("group-put", new Spec { Help = "put mods --in a group, or back to the --top (no group)",
+                                        Positionals = new[] { "mods" }, Many = true, Values = new[] { "--in" }, Flags = new[] { "--top" },
+                                        OneOf = new[] { "--in", "--top" }, Run = GroupPut }),
 #if HAS_NEXUS
             Cmd("nexus", new Spec { Help = "download a Nexus Mods link (nxm://...) and put it in the library (a mod from it already there gets the new version)",
                                     Positionals = new[] { "link" }, Run = NexusCmd }),
             Cmd("nexus-login", new Spec { Help = "sign in to Nexus Mods: your browser opens Nexus Mods' page, where you allow this program (OAuth with PKCE)",
                                           Run = NexusLoginCmd }),
             Cmd("nexus-logout", new Spec { Help = "sign out of Nexus Mods here (the access can also be taken back on Nexus Mods)", Run = NexusLogoutCmd }),
+            Cmd("nexus-info", new Spec { Help = "a mod on Nexus Mods by its number (16662, N站16662) or its page: its name, author, version, page, and whether the library has it (read only; no sign-in needed)",
+                                         Positionals = new[] { "number" }, Run = NexusInfoCmd }),
             Cmd("check-updates", new Spec { Help = "check every mod for a newer version on its own channel (Nexus Mods when signed in, GitHub releases)", Run = CheckUpdatesCmd }),
             Cmd("update", new Spec { Help = "download a mod's newer version from GitHub (or Nexus Mods, premium accounts) and put it in the library", Positionals = new[] { "mod" }, Run = UpdateCmd }),
 #else
@@ -102,7 +115,7 @@ namespace Hd2Mod
                                    Flags = new[] { "--top", "--bottom" }, Values = new[] { "--to", "--before", "--after" },
                                    OneOf = new[] { "--top", "--bottom", "--to", "--before", "--after" }, Run = Move }),
             Cmd("options", new Spec { Help = "a mod's options and sub-options", Positionals = new[] { "mod" }, Run = Options }),
-            Cmd("set", new Spec { Help = "turn an option or sub-option on or off: OPTION, OPTION/SUB, or 2.3",
+            Cmd("set", new Spec { Help = "turn an option on or off, or pick one of its sub-options (one at a time): OPTION, OPTION/SUB, or 2.3",
                                   Positionals = new[] { "mod", "option", "value" }, Flags = new[] { "--only" }, Run = Set }),
             Cmd("profiles", new Spec { Help = "the profiles: each its own mods, load order, on/off and options; * marks the one in use", Run = ProfilesCmd }),
             Cmd("profiles-on", new Spec { Help = "turn profiles on: the first time, a profile Default of every mod", Run = (a, o) => Profiling(o, true) }),
@@ -139,11 +152,17 @@ namespace Hd2Mod
             Cmd("which", new Spec { Help = "which mod a patch file or archive comes from", Positionals = new[] { "what" }, Run = Which }),
             Cmd("state", new Spec { Help = "everything about the library and the game folder, as JSON (for a window)",
                                     Flags = new[] { "--verify" }, Run = State }),
+            Cmd("report", new Spec { Help = "a zip to send with a question: the state, the deploy history, Boot Mod Loader's log and the crash dumps' names (never the dumps, never the sign-in; your user folder written as %USERPROFILE%); on the desktop unless --out",
+                                     Values = new[] { "--out" }, Run = ReportCmd }),
             Cmd("conflicts", new Spec { Help = "resources that more than one mod ships (the last in the order wins)",
                                         Flags = new[] { "-v", "--verbose" }, Run = Conflicts }),
         };
 
         static KeyValuePair<string, Spec> Cmd(string name, Spec s) => new KeyValuePair<string, Spec>(name, s);
+
+        // the commands only our own builds have, from their part in private/ (not in the repository)
+        static Commands() => OurCommands(Specs);
+        static partial void OurCommands(List<KeyValuePair<string, Spec>> specs);
 
         static string Usage() =>
             "usage: hd2qd [--version] {" + string.Join(",", Specs.Select(s => s.Key)) + "} ...";
@@ -176,7 +195,7 @@ namespace Hd2Mod
         /// record or the game folder.</summary>
         static readonly HashSet<string> ReadOnly = new HashSet<string>
         {
-            "folders", "list", "tags", "status", "check", "which", "state", "conflicts", "profiles",
+            "folders", "list", "tags", "groups", "status", "check", "which", "state", "conflicts", "profiles", "report", "nexus-info",
         };
 
         static bool Writes(string command, Args a) =>
@@ -489,6 +508,25 @@ namespace Hd2Mod
             }
             var folder = Ops.SourceFolder(path, cfg, a.Flag("--copy"));
             var mod = Ops.NewMod(folder, a.Value("--name"), Paths.Abs(path));
+            // A stable manifest identity survives versioned names and the player's rename.
+            // --name explicitly requests a separate entry (for example a variant).
+            var identity = Manifest.Read(folder)?.Guid;
+            if (a.Value("--name") == null && !string.IsNullOrWhiteSpace(identity))
+            {
+                var matches = lib.Mods.Where(m =>
+                {
+                    try { return string.Equals(Manifest.Read(m.Path)?.Guid, identity, StringComparison.OrdinalIgnoreCase); }
+                    catch (Exception e) when (e is ModError || e is IOException || e is UnauthorizedAccessException) { return false; }
+                }).ToList();
+                if (matches.Count > 1)
+                    throw new ModError("Several library entries have this manifest identity; select the entry to replace explicitly.");
+                if (matches.Count == 1)
+                {
+                    a.Pos["mod"] = matches[0].Id;
+                    Replace(a, o);
+                    return;
+                }
+            }
             if (File.Exists(path)) Origins.FromFile(mod, path);               // a download: where it came from
             if (lib.Mods.Any(m => m.Name == mod.Name))
                 throw new ModError("a mod named " + Ops.Repr(mod.Name) + " is in the library: use  hd2qd replace  or --name", "duplicate", mod.Name);
@@ -731,6 +769,79 @@ namespace Hd2Mod
             o.WriteLine("took the label off " + n + " mods: " + name);
         }
 
+        // ---------------------------------------------------------------- groups (Groups)
+
+        static void GroupList(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            void Show(string parent, int depth)
+            {
+                foreach (var g in lib.Groups.Where(g => g.Parent == parent))
+                {
+                    int n = lib.Mods.Count(m => m.Group != null && (m.Group == g.Id || Groups.Inside(lib, m.Group, g.Id)));
+                    o.WriteLine(new string(' ', depth * 2) + g.Name + "/  (" + n + (n == 1 ? " mod" : " mods") + ")");
+                    Show(g.Id, depth + 1);
+                    foreach (var m in lib.Mods.Where(m => m.Group == g.Id)) o.WriteLine(new string(' ', depth * 2 + 2) + m.Name);
+                }
+            }
+            Show(null, 0);
+            var loose = lib.Mods.Where(m => m.Group == null).ToList();
+            if (lib.Groups.Count == 0) o.WriteLine("no groups yet");
+            else if (loose.Count > 0) o.WriteLine("in no group: " + string.Join("; ", loose.Select(m => m.Name)));
+        }
+
+        static void GroupNew(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var into = a.Value("--in") != null ? Groups.Pick(lib, a.Value("--in")).Id : null;
+            var g = Groups.New(lib, a.Pos["name"], into);
+            lib.Save();
+            o.WriteLine("new group: " + Groups.PathText(lib, g.Id) + "  (" + g.Id + ")");
+        }
+
+        static void GroupRename(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var g = Groups.Pick(lib, a.Pos["group"]);
+            var was = Groups.PathText(lib, g.Id);
+            Groups.Rename(lib, g, a.Pos["name"]);
+            lib.Save();
+            o.WriteLine("renamed: " + was + " -> " + Groups.PathText(lib, g.Id));
+        }
+
+        static void GroupMove(Args a, TextWriter o)
+        {
+            if (a.Value("--in") == null && !a.Flag("--top")) throw new ModError("say where: --in a group, or --top");
+            var lib = Library.Load();
+            var g = Groups.Pick(lib, a.Pos["group"]);
+            Groups.Move(lib, g, a.Flag("--top") ? null : Groups.Pick(lib, a.Value("--in")).Id);
+            lib.Save();
+            o.WriteLine("moved: " + Groups.PathText(lib, g.Id));
+        }
+
+        static void GroupDelete(Args a, TextWriter o)
+        {
+            var lib = Library.Load();
+            var g = Groups.Pick(lib, a.Pos["group"]);
+            var was = Groups.PathText(lib, g.Id);
+            var up = g.Parent != null ? Groups.PathText(lib, g.Parent) : null;
+            Groups.Delete(lib, g);
+            lib.Save();
+            o.WriteLine("deleted the group " + was + "; what it held is now " + (up != null ? "in " + up : "at the top"));
+        }
+
+        /// <summary>Mods into a group: the window's drag onto a folder. Nothing moves on disk.</summary>
+        static void GroupPut(Args a, TextWriter o)
+        {
+            if (a.Value("--in") == null && !a.Flag("--top")) throw new ModError("say where: --in a group, or --top");
+            var lib = Library.Load();
+            var to = a.Flag("--top") ? null : Groups.Pick(lib, a.Value("--in"));
+            var mods = a.Rest.Select(r => Ops.Pick(lib, r)).Distinct().ToList();
+            foreach (var m in mods) m.Group = to?.Id;
+            lib.Save();
+            o.WriteLine((to != null ? Groups.PathText(lib, to.Id) : "no group") + ": " + string.Join("; ", mods.Select(m => m.Name)));
+        }
+
         static void Remove(Args a, TextWriter o)
         {
             var lib = Library.Load();
@@ -750,6 +861,26 @@ namespace Hd2Mod
 #endif
 
 #if HAS_NEXUS
+
+        static void NexusInfoCmd(Args a, TextWriter o)
+        {
+            var n = Nexus.ModNumber(a.Pos["number"]);
+            if (n == null) throw new ModError("not a Nexus Mods number or page: " + a.Pos["number"], "not_number", a.Pos["number"]);
+            var m = Nexus.LookUp(n.Value);
+            o.WriteLine((m.Name ?? "?") + "  (Nexus " + m.Mod + ")");
+            var by = new List<string>();
+            if (m.Author != null) by.Add("by " + m.Author + (m.Uploader != null && m.Uploader != m.Author ? " (uploaded by " + m.Uploader + ")" : ""));
+            if (m.Version != null) by.Add("version " + m.Version);
+            if (m.Updated > 0) by.Add("updated " + DateTimeOffset.FromUnixTimeSeconds(m.Updated).LocalDateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+            if (by.Count > 0) o.WriteLine("  " + string.Join(" · ", by));
+            o.WriteLine("  " + m.Downloads.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " downloads · " + m.Endorsements.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " endorsements" +
+                        (m.Adult ? " · adult content" : "") + (m.Available ? "" : " · not available: " + m.StatusWords));
+            o.WriteLine("  page:  " + m.Page);
+            o.WriteLine("  files: " + m.FilesPage);
+            if (m.Summary != null) o.WriteLine("  " + m.Summary.Replace("\n", "\n  "));
+            var had = Library.Load().Mods.FirstOrDefault(x => x.Nexus != null && x.Nexus.Game == Nexus.Game && x.Nexus.Mod == m.Mod);
+            o.WriteLine(had != null ? "in the library: " + had.Name : "not in the library");
+        }
 
         static void NexusLoginCmd(Args a, TextWriter o)
         {
@@ -1017,9 +1148,14 @@ namespace Hd2Mod
             var chosen = Manifest.Merged(Manifest.Of(mod), mod.Options);
             var (opt, sub) = Ops.OptionAt(chosen, a.Pos["option"]);
             bool value = a.Pos["value"] == "on";
+            // a sub-option is one of a kind: they replace the same static resources, so one is
+            // chosen and choosing another drops it (the user, 2026-10-27). --only is what "on"
+            // always does now, and is still taken
             if (sub == null) opt.Enabled = value;
-            else if (a.Flag("--only")) foreach (var x in opt.Subs) x.Enabled = x == sub;
-            else sub.Enabled = value;
+            else if (value) foreach (var x in opt.Subs) x.Enabled = x == sub;
+            else if (sub.Enabled && opt.Subs.Count(x => x.Enabled) == 1)
+                throw new ModError(opt.Name + " keeps one choice: pick another, or turn " + opt.Name + " off", "pick_one", opt.Name);
+            else sub.Enabled = false;
             mod.Options = chosen;
             lib.Save();
             PrintOptions(Ops.Pick(Library.Load(), a.Pos["mod"]), o);
@@ -1184,5 +1320,12 @@ namespace Hd2Mod
 
         static void State(Args a, TextWriter o) =>
             o.WriteLine(Json.Write(StateDoc.Build(Library.Load(), Store.GameDir(null, false), a.Flag("--verify")), true));
+
+        static void ReportCmd(Args a, TextWriter o)
+        {
+            var (path, summary) = Report.Write(Library.Load(), Store.GameDir(null, false), a.Value("--out"));
+            o.WriteLine("report written: " + path);
+            o.Write(summary);
+        }
     }
 }

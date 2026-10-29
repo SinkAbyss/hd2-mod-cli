@@ -60,6 +60,9 @@
 
   <ItemGroup>
     <Compile Include="..\..\core\*.cs" Link="core\%(Filename)%(Extension)" />
+    <!-- our own builds' part, kept out of the repository (.gitignore): nothing when it is not there -->
+    <Compile Include="..\..\private\core\*.cs" Link="private\core\%(Filename)%(Extension)" />
+    <Compile Include="..\..\private\gui\*.cs" Link="private\gui\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -11,3 +11,5 @@ official.txt
 #endif
 # the client id Nexus Mods issued to an application: each build of it has its own
 nexus_client_id.txt
+# our own builds' part: kept on the author's computer, never in the repository
+private/

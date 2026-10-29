@@ -140,6 +140,13 @@ namespace Hd2Mod.Tests
             return o.ToString();
         }
 
+        /// <summary>The kind of a refusal, for the window's own words.</summary>
+        protected static string Refused(params string[] args)
+        {
+            Assert.Equal(1, Commands.Run(args, new StringWriter(), new StringWriter(), out var refused));
+            return refused?.Kind;
+        }
+
         protected List<string> Deployed()
         {
             var l = Directory.EnumerateFiles(Data).Select(Path.GetFileName).Where(f => Deploy.Managed.IsMatch(f)).ToList();
@@ -191,6 +198,18 @@ namespace Hd2Mod.Tests
             var plan = PlanBodies();
             Assert.Equal("two-sub2", plan[A + ".patch_2"]);
             Assert.Equal("two-sub2b", plan[A + ".patch_3"]);
+            // one sub-option at a time: they replace the same resources (the user, 2026-10-27)
+            Cli("set", "Two", "Base/S1", "on");
+            Assert.Equal("two-sub1", PlanBodies()[A + ".patch_2"]);
+            Assert.Equal(1, Library.Load().Mods[1].Options[0].Subs.Count(x => x.Enabled));
+            Assert.Equal("pick_one", Refused("set", "Two", "Base/S1", "off"));   // the one chosen stays until another is
+            Cli("set", "Two", "Base/S2", "off");                                  // one not chosen: nothing to do
+            // several chosen by an older window: the first counts
+            var lib = Library.Load();
+            foreach (var x in lib.Mods[1].Options[0].Subs) x.Enabled = true;
+            lib.Save();
+            Assert.Equal("two-sub1", PlanBodies()[A + ".patch_2"]);
+            Assert.DoesNotContain("two-sub2", PlanBodies().Values);
             Cli("set", "Two", "Base", "off");
             Assert.DoesNotContain(A + ".patch_2", Deploy.Plan(Library.Load()).Select(w => w.Name));
         }
@@ -500,7 +519,7 @@ namespace Hd2Mod.Tests
     }
 
     /// <summary>Downloads and update checks against fakes of the sites on localhost.</summary>
-    public class OnlineSources : Fixture
+    public partial class OnlineSources : Fixture
     {
         readonly System.Net.HttpListener server = new System.Net.HttpListener();
         readonly string baseUrl;
@@ -533,6 +552,10 @@ namespace Hd2Mod.Tests
             return ms.ToArray();
         }
 
+        // the fake's part for what only our own builds send, in private/ (not in the repository)
+        partial void OurAuth(System.Net.HttpListenerRequest request, ref bool authed);
+        partial void OurAnswer(string path, ref byte[] body);
+
         void Serve()
         {
             while (server.IsListening)
@@ -544,6 +567,9 @@ namespace Hd2Mod.Tests
 #if HAS_NEXUS
                 lock (Seen) Seen.Add(path + " " + c.Request.Headers["Application-Name"]);
                 bool authed = (c.Request.Headers["Authorization"] ?? "").StartsWith("Bearer ey");
+                OurAuth(c.Request, ref authed);
+                byte[] ours = null;
+                if (authed) OurAnswer(path, ref ours);
                 var m = Regex.Match(path, @"^/v1/games/helldivers2/mods/77/files/(\d+)(/download_link)?\.json$");
 #endif
                 int status = 200;
@@ -571,6 +597,9 @@ namespace Hd2Mod.Tests
                                    .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p.Length > 1 ? p[1].Replace('+', ' ') : ""));
                     (status, body) = OAuthToken(form);
                 }
+                // Nexus: the public GraphQL API (v2), asked without signing in
+                else if (path == "/v2/graphql" && c.Request.HttpMethod == "POST")
+                    body = Bytes(GraphQLAnswer(new StreamReader(c.Request.InputStream).ReadToEnd()));
                 else if (path == "/v1/games/helldivers2/mods/77/files.json" && authed)
                     body = Bytes("{\"files\": [{\"file_id\": 1, \"version\": \"1.0\", \"category_name\": \"OLD_VERSION\", \"uploaded_timestamp\": 1700000000}, " +
                                  "{\"file_id\": 2, \"version\": \"2.0\", \"category_name\": \"MAIN\", \"uploaded_timestamp\": 1750000000}], " +
@@ -578,6 +607,7 @@ namespace Hd2Mod.Tests
                 else if (!authed) { status = 401; body = Bytes("{\"message\":\"bad key\"}"); }
                 // mods 500 and up: the rate limit is used up
                 else if (Regex.IsMatch(path, @"^/v1/games/helldivers2/mods/5\d\d/")) { status = 429; body = Bytes("{\"message\":\"rate limited\"}"); }
+                else if (ours != null) body = ours;
                 else if (path == "/v1/games/helldivers2/mods/77.json")
                     body = Bytes("{\"name\": \"Cape Colours on Nexus\", \"author\": \"Capey\", \"summary\": \"Capes in every colour.\", \"version\": \"2.0\"}");
                 else if (m.Success && m.Groups[2].Success)
@@ -603,6 +633,78 @@ namespace Hd2Mod.Tests
 #if HAS_NEXUS
         static string Link(int file, bool withKey = true) =>
             "nxm://helldivers2/mods/77/files/" + file + (withKey ? "?key=abc%2Bd&expires=1700000000&user_id=5" : "");
+
+        string lastGraphQL;
+
+        /// <summary>The fake GraphQL API: mod 77 is there, mod 14 is there but deleted, mod 13 makes an error, no other mod is.</summary>
+        string GraphQLAnswer(string request)
+        {
+            lastGraphQL = request;
+            var ids = Json.List(Json.Obj(Json.Parse(request) as Dictionary<string, object>, "variables"), "ids").OfType<Dictionary<string, object>>().ToList();
+            long id = Json.Long(ids.FirstOrDefault(), "modId");
+            if (id == 13) return "{\"errors\": [{\"message\": \"Cannot query field \\\"x\\\" on type \\\"Mod\\\".\"}]}";
+            if (id == 14)
+                return "{\"data\": {\"legacyModsByDomain\": {\"nodes\": [{\"modId\": 14, \"name\": \"Walker - DELETED\", \"status\": \"wastebinned\"}]}}}";
+            var nodes = id != 77 ? "[]" :
+                "[{\"modId\": 77, \"name\": \"Cape Colours on Nexus\", \"summary\": \"Capes in every colour.<br />Two lines.\", \"version\": \"2.0\", " +
+                "\"author\": \"Capey\", \"uploader\": {\"name\": \"CapeUploader\"}, \"pictureUrl\": \"https://example.invalid/cape.png\", " +
+                "\"updatedAt\": \"2026-10-01T12:00:00Z\", \"endorsements\": 1234, \"downloads\": 56789, \"adultContent\": false, \"status\": \"published\"}]";
+            return "{\"data\": {\"legacyModsByDomain\": {\"nodes\": " + nodes + "}}}";
+        }
+
+        /// <summary>A mod's number as players pass it around, or its page (the user, 2026-10-29).</summary>
+        [Fact]
+        public void ANexusNumberIsFoundInWhatIsTyped()
+        {
+            foreach (var typed in new[] { "16662", " 16662 ", "#16662", "N站16662", "N站 16662", "编号16662", "16662号",
+                                          "https://www.nexusmods.com/helldivers2/mods/16662", "https://www.nexusmods.com/helldivers2/mods/16662?tab=files",
+                                          "nexusmods.com/HellDivers2/mods/16662" })
+                Assert.Equal(16662L, Nexus.ModNumber(typed));
+            foreach (var typed in new[] { "", "   ", "abc", "12 34", "0", "v1.2", "https://www.nexusmods.com/helldivers2" })
+                Assert.Null(Nexus.ModNumber(typed));
+            Assert.Equal("other_game", Assert.Throws<ModError>(() => Nexus.ModNumber("https://www.nexusmods.com/skyrimspecialedition/mods/266")).Kind);
+        }
+
+        [Fact]
+        public void ANumberIsLookedUpWithoutSigningIn()
+        {
+            Assert.Null(Nexus.Credential());
+            lock (Seen) Seen.Clear();
+            var m = Nexus.LookUp(77);
+            Assert.Equal(("Cape Colours on Nexus", "Capey", "CapeUploader", "2.0"), (m.Name, m.Author, m.Uploader, m.Version));
+            Assert.Equal("Capes in every colour.\nTwo lines.", m.Summary);
+            Assert.Equal((56789L, 1234L, false, true), (m.Downloads, m.Endorsements, m.Adult, m.Available));
+            Assert.Equal(DateTimeOffset.Parse("2026-10-01T12:00:00Z").ToUnixTimeSeconds(), m.Updated);
+            Assert.Equal("https://www.nexusmods.com/helldivers2/mods/77?tab=files", m.FilesPage);
+            Assert.Contains("\"gameDomain\":\"helldivers2\"", lastGraphQL.Replace(" ", ""));
+            lock (Seen) Assert.Contains("/v2/graphql " + Nexus.AppName, Seen);
+
+            var said = Cli("nexus-info", "N站77");
+            Assert.Contains("Cape Colours on Nexus  (Nexus 77)", said);
+            Assert.Contains("by Capey (uploaded by CapeUploader) · version 2.0", said);
+            Assert.Contains("56,789 downloads · 1,234 endorsements", said);
+            Assert.Contains("files: https://www.nexusmods.com/helldivers2/mods/77?tab=files", said);
+            Assert.Contains("not in the library", said);
+            var lib = Library.Load();
+            lib.Mods.Add(UpdatesMod());
+            lib.Save();
+            Assert.Contains("in the library: Cape", Cli("nexus-info", "https://www.nexusmods.com/helldivers2/mods/77"));
+        }
+
+        [Fact]
+        public void ALookUpSaysWhyItFoundNothing()
+        {
+            Assert.Equal("nexus_missing", Refused("nexus-info", "99"));
+            Assert.Equal("not_number", Refused("nexus-info", "cape"));
+            // there, but not to be downloaded: said in words (Nexus Mods' own: wastebinned)
+            Assert.Contains("not available: deleted", Cli("nexus-info", "14"));
+            Assert.False(Nexus.LookUp(14).Available);
+            Assert.Equal("other_game", Refused("nexus-info", "https://www.nexusmods.com/skyrimspecialedition/mods/266"));
+            // not signed in, so nothing to fall back on: Nexus Mods' own words
+            var e = Assert.Throws<ModError>(() => Nexus.LookUp(13));
+            Assert.Equal("nexus_error", e.Kind);
+            Assert.Contains("Cannot query field", e.Message);
+        }
 
         [Fact]
         public void LinkIsRead()
@@ -935,6 +1037,35 @@ namespace Hd2Mod.Tests
 
     public class LibraryOps : Fixture
     {
+        [Fact]
+        public void AddingANewVersionWithTheSameManifestIdentityReplacesTheEntry()
+        {
+            const string identity = "3f7a2c91-6d4e-4b58-9a0c-e15b82d4f6a7";
+            var first = Path.Combine(Root, "loader-old.zip");
+            var next = Path.Combine(Root, "loader-new.zip");
+            Zip(first, ("manifest.json", "{\"Guid\":\"" + identity + "\",\"Name\":\"Loader v1\"}"), (A + ".patch_0", "old"));
+            Zip(next, ("manifest.json", "{\"Guid\":\"" + identity + "\",\"Name\":\"Loader v2\"}"), (A + ".patch_0", "new"));
+            Cli("add", first);
+            var original = Library.Load().Mods.Single();
+            Cli("rename", original.Id, "My loader");
+            Cli("disable", original.Id);
+            Cli("group-new", "Scripts");
+            Cli("group-put", original.Id, "--in", "Scripts");
+            Cli("tag", original.Id, "dev");
+            var group = Library.Load().Mods.Single().Group;
+            Assert.Contains("replaced:", Cli("add", next));
+            var replaced = Assert.Single(Library.Load().Mods);
+            Assert.Equal(original.Id, replaced.Id);
+            Assert.Equal("My loader", replaced.Name);
+            Assert.Equal("Loader v2", replaced.RealName);
+            Assert.False(replaced.Enabled);
+            Assert.Equal(group, replaced.Group);
+            Assert.Contains("dev", replaced.Tags);
+            Assert.Equal("new", File.ReadAllText(Path.Combine(replaced.Path, A + ".patch_0")));
+            Cli("add", next, "--name", "Explicit variant");
+            Assert.Equal(2, Library.Load().Mods.Count);
+        }
+
         static void Zip(string path, params (string Name, string Body)[] entries)
         {
             using (var z = ZipFile.Open(path, ZipArchiveMode.Create))
@@ -1742,6 +1873,81 @@ namespace Hd2Mod.Tests
             Assert.Equal(new[] { "armour" }, Library.Load().Mods[0].Tags.ToArray());
             CliCode(1, "tag-many", "armour");   // a label with no mod behind it is refused
         }
+
+        /// <summary>A group is only a name in the library (the user, 2026-10-27): putting mods in
+        /// groups moves no folder and changes nothing a deploy would do.</summary>
+        [Fact]
+        public void GroupsAreShownOnlyNothingMoves()
+        {
+            var one = Mod("One", Files((A + ".patch_0", "one")));
+            var two = Mod("Two", Files((B + ".patch_0", "two")));
+            Cli("add", one);
+            Cli("add", two);
+            Cli("deploy");
+            var before = Deployed();
+            Cli("group-new", "Looks");
+            Cli("group-new", "Armour", "--in", "Looks");
+            Cli("group-put", "One", "Two", "--in", "Looks/Armour");
+            Assert.True(Directory.Exists(one) && Directory.Exists(two));       // the folders stay where they are
+            Assert.Contains("move 0, write 0, delete 0", Cli("status"));
+            Assert.Equal(before, Deployed());
+            var lib = Library.Load();
+            Assert.Equal("Looks/Armour", Groups.PathText(lib, lib.Mods[0].Group));
+            Assert.Contains("Armour/  (2 mods)", Cli("groups"));
+            Assert.Contains("\"group\"", Cli("state"));
+            Cli("group-put", "One", "--top");
+            Assert.Null(Library.Load().Mods[0].Group);
+        }
+
+        /// <summary>The groups' rules: three levels at most, no group inside itself, no two of one
+        /// name side by side; deleting one hands what it held to the group around it.</summary>
+        [Fact]
+        public void GroupsKeepTheirRules()
+        {
+            Cli("add", Mod("One", Files((A + ".patch_0", "one"))));
+            Cli("group-new", "A");
+            Cli("group-new", "B", "--in", "A");
+            Cli("group-new", "C", "--in", "A/B");
+            Assert.Equal("group_depth", Refused("group-new", "D", "--in", "A/B/C"));
+            Assert.Equal("group_exists", Refused("group-new", "b", "--in", "A"));
+            Assert.Equal("group_inside", Refused("group-move", "A", "--in", "A/B"));
+            Cli("group-new", "Other");
+            Assert.Equal("group_depth", Refused("group-move", "A", "--in", "Other"));    // A holds two levels
+            Cli("group-new", "B", "--in", "Other");
+            Assert.Equal("group_ambiguous", Refused("group-put", "One", "--in", "B"));  // two groups named B: the path tells them apart
+            Cli("group-put", "One", "--in", "A/B/C");
+            Cli("group-delete", "A/B");
+            var lib = Library.Load();
+            Assert.Equal("A/C", Groups.PathText(lib, Groups.Pick(lib, "C").Id));     // C came up into A
+            Assert.Equal("A/C", Groups.PathText(lib, lib.Mods[0].Group));
+            Cli("group-rename", "A/C", "Kept");
+            Assert.Equal("A/Kept", Groups.PathText(Library.Load(), Library.Load().Mods[0].Group));
+            CliCode(1, "group-move", "Other");                                          // --in or --top
+        }
+
+        /// <summary>A library.json written by hand or by an older build: a group under one that is
+        /// gone, a loop, or a mod in a missing group come back to the top, not as an error.</summary>
+        [Fact]
+        public void BrokenGroupsGoToTheTop()
+        {
+            Cli("add", Mod("One", Files((A + ".patch_0", "one"))));
+            var path = Path.Combine(Store.Home, "library.json");
+            var d = (Dictionary<string, object>)Json.Parse(File.ReadAllText(path));
+            d["groups"] = new List<object>
+            {
+                new Dictionary<string, object> { ["id"] = "x", ["name"] = "X", ["parent"] = "y" },
+                new Dictionary<string, object> { ["id"] = "y", ["name"] = "Y", ["parent"] = "x" },
+                new Dictionary<string, object> { ["id"] = "z", ["name"] = "Z", ["parent"] = "gone" },
+            };
+            ((Dictionary<string, object>)((List<object>)d["mods"])[0])["group"] = "missing";
+            File.WriteAllText(path, Json.Write(d));
+            var lib = Library.Load();
+            Assert.All(lib.Groups, g => Assert.True(Groups.Level(lib, g.Id) <= Groups.Depth));
+            Assert.Null(Groups.Of(lib, "z").Parent);
+            Assert.Null(lib.Mods[0].Group);
+            Assert.Contains("Z/", Cli("groups"));
+        }
+
 
         /// <summary>A mod packs its picture under whatever name the author chose, and Arsenal shows
         /// it; so does this (the user's tester, 2026-10-25).</summary>

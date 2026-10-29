@@ -41,7 +41,7 @@ namespace Hd2Mod
 #endif
 
     /// <summary>Nexus Mods: the game's name there and a mod's page.</summary>
-    public static class Nexus
+    public static partial class Nexus
     {
         public const string Game = "helldivers2";
 
@@ -57,8 +57,24 @@ namespace Hd2Mod
         /// <summary>The name every request carries. A build anyone else makes from this source
         /// says so, because the name is registered with Nexus Mods for the builds published here
         /// and their log would otherwise show ours for a program we did not make (the user,
-        /// 2026-10-25). Our own builds are marked official; see build.bat.</summary>
-        public const string AppName = "HD2 Mod Quick Deploy (unofficial build)";
+        /// 2026-10-25). Our own builds name themselves in a part of their own (private/, kept out
+        /// of the repository).</summary>
+        public static readonly string AppName = Named();
+
+        static string Named()
+        {
+            var name = "HD2 Mod Quick Deploy (unofficial build)";
+            OurName(ref name);
+            return name;
+        }
+
+        // What only our own builds do is in private/ (not in the repository), each through one of
+        // these; a build without it has none of them, and the compiler leaves their calls out.
+        static partial void OurName(ref string name);
+        static partial void OtherCredential(ref string credential);
+        static partial void Carry(HttpRequestMessage req, string credential);
+        static partial void NotAccepted(string credential);
+        static partial void AccountOf(string credential, ref (string Name, bool Premium)? account);
 
         /// <summary>The API's address; tests point it at a local fake.</summary>
         public static string ApiBase = Environment.GetEnvironmentVariable("HD2QD_NEXUS_API") ?? "https://api.nexusmods.com";
@@ -87,7 +103,9 @@ namespace Hd2Mod
         {
             var signedIn = NexusOAuth.Credential();
             if (signedIn != null) return signedIn;
-            return null;
+            string other = null;
+            OtherCredential(ref other);
+            return other;
         }
 
         /// <summary>An API request (path from /v1/...) with what requests carry (Credential): the answer's text.</summary>
@@ -100,6 +118,7 @@ namespace Hd2Mod
                 // the sign-in's access token
                 if (key.StartsWith("Bearer ", StringComparison.Ordinal))
                     req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key.Substring(7));
+                else Carry(req, key);
                 HttpResponseMessage r;
                 try { r = http.SendAsync(req).GetAwaiter().GetResult(); }
                 catch (HttpRequestException e) { throw new ModError("Nexus Mods cannot be reached: " + e.Message, "nexus_offline"); }
@@ -110,6 +129,7 @@ namespace Hd2Mod
                     {
                         case 200: return body;
                         case 401:
+                            if (!key.StartsWith("Bearer ", StringComparison.Ordinal)) NotAccepted(key);
                             throw new ModError("Nexus Mods does not accept the sign-in: sign in again", "nexus_login");
                         case 403: throw new ModError("Nexus Mods refused the download (an old link, or one for a premium account): " + body, "nexus_refused");
                         case 404: throw new ModError("Nexus Mods has no such mod or file", "nexus_missing");
@@ -124,6 +144,9 @@ namespace Hd2Mod
         public static (string Name, bool Premium) Validate(string key)
         {
             if (key.StartsWith("Bearer ", StringComparison.Ordinal)) return NexusOAuth.Account();      // in the token itself
+            (string Name, bool Premium)? account = null;
+            AccountOf(key, ref account);
+            if (account != null) return account.Value;
             throw new ModError("not signed in to Nexus Mods", "nexus_login");
         }
 

@@ -103,6 +103,8 @@ namespace QuickDeploy
             PreviewKeyDown += (s, e) => { if (dragRow != null && e.Key == Key.Escape) { EndDrag(false); e.Handled = true; } };
             // the loader panel's details close like a menu (LoaderInfo)
             PreviewKeyDown += (s, e) => { if (e.Key == Key.Escape && loaderPop != null && loaderPop.IsOpen) { CloseLoaderInfo(); e.Handled = true; } };
+            // Esc leaves the settings page for the page it was opened from
+            PreviewKeyDown += (s, e) => { if (e.Key == Key.Escape && !e.Handled && SettingsPage.Visibility == Visibility.Visible) { ShowPage(pageBack); e.Handled = true; } };
             PreviewTextInput += TypeToSearch;
             PreviewMouseDown += (s, e) =>
             {
@@ -129,10 +131,11 @@ namespace QuickDeploy
             AddBtn.Content = Texts.Get("add");
             UpdatesBtn.Content = Texts.Get(checking ? "up_checking_btn" : "up_check");
             RefreshBtn.Content = Texts.Get("refresh");
-            JumpButtons();
             DeployBtn.Content = Texts.Get("deploy");
             LaunchBtn.Content = Texts.Get("launch");
-            ListHint.Text = Texts.Get(Texts.TopWins ? "list_hint_top" : "list_hint");
+            ListHint.Text = Texts.Get(groupView ? "g_hint" : Texts.TopWins ? "list_hint_top" : "list_hint");
+            ViewGroups.Content = Texts.Get("view_groups");
+            ViewOrder.Content = Texts.Get("view_order");
             PageDeploy.Content = Texts.Get("page_deploy");
             PageDownload.Content = Texts.Get("page_download");
             PageStorage.Content = Texts.Get("page_storage");
@@ -158,6 +161,7 @@ namespace QuickDeploy
             if (DownloadPage.Visibility == Visibility.Visible) RenderDownloads();
 #endif
             if (StoragePage.Visibility == Visibility.Visible) RenderStorage();
+            if (SettingsPage.Visibility == Visibility.Visible) RenderSettings();
         }
 
         // ---------------------------------------------------------------- start, state, commands
@@ -176,12 +180,16 @@ namespace QuickDeploy
         void Start()
         {
             Mark("window loaded");
+            LoadView();
+            HookGroupDrag();
             LuaMods.Lazy = true;                       // the list first; the mods' scripts after (WarmLua)
             Watch();
             LoadFilters();
             ShowSaved();
             Refresh();
             ClickTest();
+            GroupTest();
+            PreviewTest();
             DragTest();
             Listen();
             SelfUpdateAtStart();
@@ -312,6 +320,9 @@ namespace QuickDeploy
                 t16.Tick += (s, e) =>
                 {
                     t16.Stop();
+                    if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal;
+                    Height = 640;           // a short library still has more than a page to jump over
+                    UpdateLayout();
                     ListScroll.ScrollToTop();
                     UpdateLayout();
                     var row = List.Children.Count > 2 ? List.Children[2] as UIElement : List;
@@ -322,11 +333,20 @@ namespace QuickDeploy
                         row.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, at + 40 * n, -120) { RoutedEvent = UIElement.PreviewMouseWheelEvent });
                         if (++n < 6) return;
                         turn.Stop();
+                        // then two turns on the button itself: the list still moves (the user, 2026-10-27).
+                        // A library too short to call it up gets it shown here, for that turn alone
+                        bool came = flingBtn != null;
+                        if (!came) { ListScroll.ScrollToTop(); UpdateLayout(); ShowFling(-1, new Point(200, 120)); UpdateLayout(); }
+                        double before = ListScroll.VerticalOffset;
+                        var onBtn = (flingBtn?.Child as Panel)?.Children.OfType<TextBlock>().FirstOrDefault();
+                        for (int k = 0; k < 2 && onBtn != null; k++)
+                            onBtn.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, at + 40 * (n + k), -120) { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+                        UpdateLayout();
                         var path = Environment.GetEnvironmentVariable("HD2QD_WHEEL_OUT");
                         if (path != null)
-                            File.WriteAllText(path, "shown " + (flingBtn != null) + "\ndir " + flingDir +
+                            File.WriteAllText(path, "shown " + came + "\ndir " + flingDir +
                                               "\nat " + (flingBtn == null ? "-" : Canvas.GetLeft(flingBtn) + "," + Canvas.GetTop(flingBtn)) +
-                                              "\noffset " + ListScroll.VerticalOffset + "\n");
+                                              "\noffset " + before + "\nafter_button " + ListScroll.VerticalOffset + "\n");
                     };
                     turn.Start();
                 };
@@ -936,11 +956,21 @@ namespace QuickDeploy
                 g.Start();
                 return;
             }
-            if (Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST") == "settings")
+            var settingsTest = Environment.GetEnvironmentVariable("HD2QD_CLICK_TEST");
+            if (settingsTest == "settings" || settingsTest == "settings_end" || settingsTest == "settings_esc")
             {
-                // "settings": the settings window, so a test outside can take its picture
+                // "settings": the settings page, so a test outside can take its picture;
+                // "settings_end": that page scrolled to its end; "settings_esc": that page, then Esc
                 var g = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-                g.Tick += (s, e) => { g.Stop(); SettingsBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, SettingsBtn)); };
+                g.Tick += (s, e) =>
+                {
+                    g.Stop();
+                    SettingsBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, SettingsBtn));
+                    if (settingsTest == "settings_end")
+                        Dispatcher.BeginInvoke(new Action(() => SettingsPage.ScrollToEnd()), DispatcherPriority.Loaded);
+                    if (settingsTest == "settings_esc")
+                        Dispatcher.BeginInvoke(new Action(() => RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent })), DispatcherPriority.Loaded);
+                };
                 g.Start();
                 return;
             }
@@ -1366,6 +1396,11 @@ namespace QuickDeploy
         bool Refused(CliResult r)
         {
             if (r.Ok) return false;
+#if HAS_NEXUS
+            bool said = false;
+            OurRefusal(r, ref said);
+            if (said) return false;
+#endif
             switch (r.Refused?.Kind)
             {
                 case "no_game":
@@ -1390,6 +1425,10 @@ namespace QuickDeploy
                 case "nexus_busy": Dialog.Tell(this, Texts.Get("nx_busy")); break;
 #endif
                 case "not_zip": Dialog.Tell(this, Texts.F("nx_not_zip", r.Refused.Arg)); break;
+                case "group_exists": Dialog.Tell(this, Texts.F("g_exists", r.Refused.Arg)); break;
+                case "group_depth": Dialog.Tell(this, Texts.Get("g_depth")); break;
+                case "group_inside": Dialog.Tell(this, Texts.Get("g_inside")); break;
+                case "pick_one": Dialog.Tell(this, Texts.F("pick_one", r.Refused.Arg)); break;
                 default: Dialog.Tell(this, Texts.F("failed", r.Message)); break;
             }
             return false;
@@ -1646,20 +1685,14 @@ namespace QuickDeploy
                 if (m.Enabled)
                 {
                     var issues = IssuesOf(m).ToList();
-                    var same = issues.FirstOrDefault(i => i.Kind == "same_name");
                     if (issues.Any(i => i.Kind == "no_loader"))
                         Line(st.Lua.Running == "other" && owner != null ? Texts.F("lua_other_boot", owner.Name) : Texts.Get("lua_no_loader"), "Yellow");
                     else if (issues.Any(i => i.Kind == "needs_chef"))
                         Line(Texts.F("lua_wrong_loader", running ?? "-"), "Yellow");
                     // started by Chef Shared Loader, which reads no script over 4 MB (2026-10-26)
                     if (issues.Any(i => i.Kind == "too_big_for_chef")) Line(Texts.F("lua_too_big", Texts.Size(lu.Biggest)), "Yellow");
-                    // the loader in effect is not repeated here: the card on the left says it (the user, 2026-10-26)
-                    if (same.Kind != null)
-                    {
-                        var winner = ById(same.Mods[0]);
-                        if (same.Mods[0] != m.Id) CopyLine(Texts.F("lua_same_name", winner?.Name ?? "?", same.Detail), "Yellow");
-                        else CopyLine(Texts.F("lua_same_name_wins", string.Join(", ", same.Mods.Skip(1).Select(id => ById(id)?.Name ?? "?")), same.Detail), "Muted");
-                    }
+                    // the loader in effect is not repeated here: the card on the left says it (the user, 2026-10-26);
+                    // a script name another mod declares too is its own card below, where it is chosen
                 }
             }
             // its scripts by the names the loader's log and Mod Lag Watchdog print (mods/author/name),
@@ -1824,7 +1857,8 @@ namespace QuickDeploy
                     switch (g.Key)
                     {
                         // what depends on the loader is said under each choice (LoaderChoice), not here
-                        case "same_name": Say(Texts.F("lua_side_same", g.Count())); break;
+                        // a script name two mods declare: said in those mods' details, where it can be
+                        // settled (the user, 2026-10-27)
                         case "cannot_run": Say(Texts.F("lua_side_broken", g.Count())); break;
                         case "pack_alone": Say(Texts.F("lua_side_pack", g.Count())); break;
                     }
@@ -2129,6 +2163,7 @@ namespace QuickDeploy
                 {
                     selectedId = first.Id;
                     open.Add(first.Id);
+                    if (groupView) RevealSelected();
                     // scrolled to, once the list is laid out
                     Dispatcher.BeginInvoke(new Action(() => { if (rows.TryGetValue(first.Id, out var r)) r.Row.BringIntoView(); }), DispatcherPriority.Loaded);
                 }
@@ -2136,8 +2171,9 @@ namespace QuickDeploy
             }
             // the chosen mod stays while it is in the list; else the first the list shows
             WhereItWas();
-            if (!st.Mods.Any(m => m.Id == selectedId && (searchWords.Length == 0 || Shown(m))))
-                selectedId = (Seen().FirstOrDefault() ?? st.Mods.FirstOrDefault())?.Id;
+            // in the groups a group may be chosen instead of a mod (GroupView)
+            if (!(groupView && selectedId == null && groupPath.Count > 0) && !st.Mods.Any(m => m.Id == selectedId && (searchWords.Length == 0 || Shown(m))))
+                selectedId = groupView ? null : (Seen().FirstOrDefault() ?? st.Mods.FirstOrDefault())?.Id;
             Mark("render: top");
             RenderNav();
             Mark("render: left list");
@@ -2334,15 +2370,17 @@ namespace QuickDeploy
             top.Children.Add(c1);
 
             var keyPanel = new StackPanel();
-            if (NexusOAuth.ClientId != null) SignInCard(keyPanel);
-            else
-            {
-            SignInCard(keyPanel);          // no sign-in id in this build: it says so
-            }
+            bool drawn = false;
+            if (NexusOAuth.ClientId == null) OurConnectCard(keyPanel, ref drawn);
+            if (!drawn) SignInCard(keyPanel);          // with no sign-in id in this build, it says so
             var c2 = Card(keyPanel);
             Grid.SetColumn(c2, 2);
             top.Children.Add(c2);
             Downloads.Children.Add(top);
+
+            // a mod by its number, as players pass it around (the user, 2026-10-29: "N站16662")
+            Downloads.Children.Add(Card(FindByNumber(ours)));
+            Downloads.Children.Add(new Border { Height = 20 });
 
             // where downloads go: the default mod folder, chosen on the storage page
             var where = new DockPanel();
@@ -2486,11 +2524,121 @@ namespace QuickDeploy
                 Downloads.Children.Add(Card(list));
             }
         }
+
+        // the look-up by number: what the box held, what was found or why nothing was, while
+        // the page is drawn anew
+        string findTyped, findSaid;
+        NexusModInfo found;
+        bool finding;
+
+        /// <summary>The download page's look-up: a Nexus Mods number or page typed or pasted, what
+        /// the mod's page says, and the way to its Files tab, where Mod Manager Download is.</summary>
+        UIElement FindByNumber(bool ours)
+        {
+            var panel = new StackPanel();
+            panel.Children.Add(Heading(Texts.Get("dl_find")));
+            if (Texts.Hints) panel.Children.Add(Small(Texts.Get("dl_find_n"), new Thickness(0, 4, 0, 0)));
+            var row = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+            var go = new Button { Content = Texts.Get("dl_find_do"), Style = (Style)FindResource("Primary"), MinHeight = 40, Margin = new Thickness(8, 0, 0, 0), IsEnabled = !finding };
+            DockPanel.SetDock(go, Dock.Right);
+            row.Children.Add(go);
+            var box = new TextBox { Style = (Style)FindResource("Input"), Tag = Texts.Get("dl_find_ph"), Text = findTyped ?? "" };
+            row.Children.Add(box);
+            panel.Children.Add(row);
+
+            async void Find()
+            {
+                if (finding) return;
+                findTyped = box.Text;
+                found = null;
+                long? n;
+                try { n = Nexus.ModNumber(box.Text); }
+                catch (ModError e) { findSaid = Texts.F("dl_find_other", e.Arg); RenderDownloads(); return; }
+                if (n == null) { findSaid = Texts.Get("dl_find_none"); RenderDownloads(); return; }
+                finding = true;
+                findSaid = null;
+                RenderDownloads();
+                NexusModInfo got = null;
+                var r = await Task.Run(() => Cli.Call(() => { got = Nexus.LookUp(n.Value); return ""; }));
+                finding = false;
+                var kind = r.Refused?.Kind;
+                if (r.Ok) found = got;
+                else if (kind == "nexus_missing") findSaid = Texts.F("dl_find_missing", n.Value);
+                else findSaid = kind != null && Why(kind) != kind ? Why(kind) : Texts.F("failed", r.Message);
+                RenderDownloads();
+            }
+            go.Click += (s, e) => Find();
+            box.KeyDown += (s, e) => { if (e.Key == Key.Enter) { e.Handled = true; Find(); } };
+
+            if (finding) panel.Children.Add(Small(Texts.Get("dl_find_busy"), new Thickness(0, 12, 0, 0)));
+            else if (findSaid != null)
+                panel.Children.Add(new TextBlock { Text = findSaid, Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) });
+            else if (found != null) panel.Children.Add(Found(found, ours));
+            return panel;
+        }
+
+        /// <summary>What a mod's page says: its picture (none for adult content), name, author,
+        /// version, numbers and words, its address, whether the library has it, and the buttons
+        /// to its page and its Files tab.</summary>
+        UIElement Found(NexusModInfo m, bool ours)
+        {
+            var card = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
+            if (!m.Adult && Uri.TryCreate(m.Picture ?? "", UriKind.Absolute, out var pic) && pic.Scheme == Uri.UriSchemeHttps)
+            {
+                var frame = new Border { Width = 192, Height = 108, Margin = new Thickness(0, 0, 16, 0), Background = B("Ground700"), VerticalAlignment = VerticalAlignment.Top, ClipToBounds = true };
+                try
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource = pic;
+                    bmp.DecodePixelWidth = 384;
+                    bmp.EndInit();
+                    frame.Child = new Image { Source = bmp, Stretch = Stretch.UniformToFill };
+                }
+                catch (Exception e) when (e is NotSupportedException || e is IOException || e is InvalidOperationException) { }
+                DockPanel.SetDock(frame, Dock.Left);
+                card.Children.Add(frame);
+            }
+            var words = new StackPanel();
+            words.Children.Add(Heading((m.Name ?? "?") + "  ·  Nexus " + m.Mod));
+            var meta = new List<string>();
+            if (m.Author != null) meta.Add(Texts.F("dl_find_by", m.Author));
+            if (m.Version != null) meta.Add(Texts.F("dl_find_version", m.Version));
+            if (m.Updated > 0) meta.Add(Texts.F("dl_find_updated", DateTimeOffset.FromUnixTimeSeconds(m.Updated).LocalDateTime.ToString("yyyy-MM-dd")));
+            meta.Add(Texts.F("dl_find_stats", m.Downloads.ToString("N0"), m.Endorsements.ToString("N0")));
+            if (m.Adult) meta.Add(Texts.Get("dl_find_adult"));
+            words.Children.Add(Small(string.Join("  ·  ", meta), new Thickness(0, 4, 0, 0)));
+            if (!m.Available)
+                words.Children.Add(new TextBlock { Text = Texts.F("dl_find_status", Texts.Has("nx_st_" + m.Status) ? Texts.Get("nx_st_" + m.Status) : m.Status), Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+            if (m.Summary != null)
+                words.Children.Add(new TextBlock { Text = m.Summary, Foreground = B("Ink"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+            words.Children.Add(Code(m.Page));
+            var have = st?.Mods.FirstOrDefault(x => x.NexusMod == m.Mod);
+            if (have != null)
+                words.Children.Add(new TextBlock { Text = Texts.F("dl_find_have", have.Name), Foreground = B("Blue"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) });
+            var btns = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
+            var files = new Button { Content = Texts.Get("dl_find_files"), Style = (Style)FindResource("Primary"), MinHeight = 36, IsEnabled = m.Available };
+            files.Click += (s, e) => Process.Start(new ProcessStartInfo(m.FilesPage) { UseShellExecute = true });
+            btns.Children.Add(files);
+            var page = new Button { Content = Texts.Get("dl_find_page"), Style = (Style)FindResource("Ghost"), MinHeight = 36, Margin = new Thickness(8, 0, 0, 0) };
+            page.Click += (s, e) => Process.Start(new ProcessStartInfo(m.Page) { UseShellExecute = true });
+            btns.Children.Add(page);
+            words.Children.Add(btns);
+            // Mod Manager Download there comes back here only while the button is ours
+            if (m.Available) words.Children.Add(Small(Texts.Get(ours ? "dl_find_files_n" : "dl_find_take"), new Thickness(0, 6, 0, 0)));
+            card.Children.Add(words);
+            return card;
+        }
 #endif
 
         /// <summary>Why a download failed, in the window's words.</summary>
         static string Why(string kind)
         {
+#if HAS_NEXUS
+            string why = null;
+            OurWhy(kind, ref why);
+            if (why != null) return why;
+#endif
             switch (kind)
             {
 #if HAS_NEXUS
@@ -2505,9 +2653,15 @@ namespace QuickDeploy
             }
         }
 
-        /// <summary>One of the three pages: "deploy", "download" or "storage".</summary>
+        // the page the settings page was opened from: Esc and the gear go back to it
+        string pageBack = "deploy";
+
+        /// <summary>One of the pages: "deploy", "download", "storage", "tags", or "settings" (the
+        /// gear; a page of its own since 2026-10-27, the window was taller than the main one).</summary>
         void ShowPage(string page)
         {
+            if (page == "settings" && SettingsPage.Visibility != Visibility.Visible)
+                pageBack = StoragePage.IsVisible ? "storage" : TagsPage.IsVisible ? "tags" : DownloadPage.IsVisible ? "download" : "deploy";
             PageDeploy.IsChecked = page == "deploy";
             PageDownload.IsChecked = page == "download";
             PageStorage.IsChecked = page == "storage";
@@ -2516,11 +2670,17 @@ namespace QuickDeploy
             DownloadPage.Visibility = page == "download" ? Visibility.Visible : Visibility.Collapsed;
             StoragePage.Visibility = page == "storage" ? Visibility.Visible : Visibility.Collapsed;
             TagsPage.Visibility = page == "tags" ? Visibility.Visible : Visibility.Collapsed;
+            SettingsPage.Visibility = page == "settings" ? Visibility.Visible : Visibility.Collapsed;
+            // the gear lit while its page is on show, as the page buttons are
+            SettingsBtn.Background = page == "settings" ? B("Yellow") : Brushes.Transparent;
+            SettingsBtn.BorderBrush = page == "settings" ? B("Yellow") : B("Grid");
+            GearPath.Fill = page == "settings" ? B("TapeInk") : B("Ink");
 #if HAS_NEXUS
             if (page == "download") RenderDownloads();
 #endif
             if (page == "storage") RenderStorage();
             if (page == "tags") RenderTags();
+            if (page == "settings") { RenderSettings(); SettingsPage.ScrollToTop(); }
         }
 
         void Page_Click(object sender, RoutedEventArgs e) =>
@@ -2883,7 +3043,11 @@ namespace QuickDeploy
             storageSel = r.Out;
             RenderStorage();
             var finds = Storage.Look(r.Out, Library.Load());
-            if (finds.Managers.Count > 0 || finds.Loose.Count > 0) ImportFromManagers(false, finds, r.Out);
+            // a manager's store whose list was not found, or found and not read, is said and its list
+            // asked for, as Import from managers does: the folder was only added, in silence (players
+            // on 0.11.0 picked their HD2 Arsenal folder there, 2026-10-27)
+            if (finds.Managers.Count > 0 || finds.Loose.Count > 0 || finds.NeedsConfig != null || finds.Problems.Count > 0)
+                ImportFromManagers(false, finds, r.Out);
         }
 
         /// <summary>The menu at the list's title: the profiles (one is in use), the mod library,
@@ -3202,6 +3366,16 @@ namespace QuickDeploy
                 Texts.F(x.ProblemKind == "bad_format" || x.ProblemKind == "bad_version" ? "im_problem_format" : "im_problem", x.Name, x.Where, x.Problem)));
             if (found.Count == 0 && loose.Count == 0)
             {
+                // a library folder whose manager's list could not be read: said, and another file
+                // of that manager can be chosen (the user, 2026-10-27)
+                var unread = folder != null ? all.FirstOrDefault(x => x.Problem != null) : null;
+                if (unread != null)
+                {
+                    if (!Dialog.Ask(this, problems + "\n\n" + Texts.Get("lf_list_other"), Texts.Get("lf_list_pick"))) return;
+                    var other = AskForList(unread.Key, folder, false);
+                    if (other != null) ImportFromManagers(false, new FolderFinds { Managers = { other } }, folder);
+                    return;
+                }
                 if (problems.Length > 0) Dialog.Tell(this, problems);
                 else if (!firstStart) Dialog.Tell(this, Texts.Get("im_none"));
                 return;
@@ -3261,10 +3435,10 @@ namespace QuickDeploy
 
         /// <summary>A manager's store whose list was not found: the player is told which manager's it
         /// is and asked for its list file, which must list mods in this folder. Null: not given.</summary>
-        ImportSource AskForList(string key, string folder)
+        ImportSource AskForList(string key, string folder, bool ask = true)
         {
             var (name, file, usual) = Importers.ConfigOf(key);
-            if (!Dialog.Ask(this, Texts.F("lf_list_ask", name, file), Texts.Get("lf_list_pick"))) return null;
+            if (ask && !Dialog.Ask(this, Texts.F("lf_list_ask", name, file), Texts.Get("lf_list_pick"))) return null;
             var pick = new Microsoft.Win32.OpenFileDialog
             {
                 Title = Texts.F("lf_list_title", name), Filter = file + "|" + file + "|JSON (*.json)|*.json", CheckFileExists = true,
@@ -3395,9 +3569,19 @@ namespace QuickDeploy
         async Task<bool> AskKey()
         {
             if (NexusOAuth.ClientId != null) return await SignIn();
+            Func<Task<bool>> other = null;
+            OurConnect(ref other);
+            if (other != null) return await other();
             Dialog.Tell(this, Texts.Get("nx_no_client"));
             return false;
         }
+
+        // What only our own builds show is in private/ (not in the repository), each through one
+        // of these; a build without it has none of them, and the compiler leaves their calls out.
+        partial void OurRefusal(CliResult r, ref bool said);
+        partial void OurConnectCard(StackPanel panel, ref bool drawn);
+        partial void OurConnect(ref Func<Task<bool>> connect);
+        static partial void OurWhy(string kind, ref string why);
 #endif
 
 #if HAS_NEXUS
@@ -3513,6 +3697,9 @@ namespace QuickDeploy
                 ProfileBtn.Template = Plain();
                 ProfileBtn.Content = head;
             }
+            ShowView();
+            ListHint.Text = Texts.Get(groupView ? "g_hint" : Texts.TopWins ? "list_hint_top" : "list_hint");
+            if (groupView) { RenderGroups(); return; }
             // a row is built again only when what it shows changed; the others stay put
             var want = new List<UIElement>();
             var seen = new HashSet<string>();
@@ -3812,7 +3999,10 @@ namespace QuickDeploy
         /// the mods taken; with Shift every row from the one shown down to it is taken.</summary>
         void Take(ModRow m)
         {
-            var mods = Seen().ToList();
+            // in the groups, the column the mod is in, in its order: Shift took the load order's
+            // range, mods of other groups out of sight among them, and a drag moved them all
+            // (the user, 2026-10-27)
+            var mods = groupView ? GroupShown().Where(x => x.Group == m.Group).ToList() : Seen().ToList();
             var keys = Keyboard.Modifiers;
             if ((keys & ModifierKeys.Shift) != 0 && selectedId != null)
             {
@@ -3827,7 +4017,7 @@ namespace QuickDeploy
             {
                 if (!picked.Remove(m.Id))
                 {
-                    if (picked.Count == 0 && selectedId != null) picked.Add(selectedId);
+                    if (picked.Count == 0 && selectedId != null && mods.Any(x => x.Id == selectedId)) picked.Add(selectedId);
                     picked.Add(m.Id);
                     selectedId = m.Id;
                 }
@@ -3855,8 +4045,16 @@ namespace QuickDeploy
         }
 
         /// <summary>The mods taken together, in load order, when this one is among them.</summary>
-        List<ModRow> Taken(ModRow m) =>
-            picked.Count > 1 && picked.Contains(m.Id) ? st.Mods.Where(x => picked.Contains(x.Id)).ToList() : new List<ModRow> { m };
+        /// <summary>The mods an action on m acts on: the ones taken with it, else m alone. In the
+        /// groups only those of m's own column, and shown: a drag must never move mods out of
+        /// sight (the user, 2026-10-27: other groups' mods were moved into the one dropped on).</summary>
+        List<ModRow> Taken(ModRow m)
+        {
+            if (picked.Count <= 1 || !picked.Contains(m.Id)) return new List<ModRow> { m };
+            var taken = st.Mods.Where(x => picked.Contains(x.Id));
+            if (groupView) taken = taken.Where(x => x.Group == m.Group && Shown(x));
+            return taken.ToList();
+        }
 
         void ClearDrop()
         {
@@ -4036,7 +4234,7 @@ namespace QuickDeploy
         }
 
         /// <summary>An open mod's options, as the board's cards: a manifest option with
-        /// sub-options is a group (pick one; Ctrl+click for more), the options without
+        /// sub-options is a group (pick one), the options without
         /// any are one group of parts that can each be on or off.</summary>
         UIElement Options(ModRow m)
         {
@@ -4076,10 +4274,9 @@ namespace QuickDeploy
                     string sref = (i + 1) + "." + (j + 1);
                     cards.Children.Add(Card(sub.Name, sub.Icon, sub.Files, sub.Bytes, sub.Enabled, sub.Description, () =>
                     {
+                        // one of a kind: the sub-options replace the same resources (the user, 2026-10-27)
                         bool was = sub.Enabled;
-                        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
-                            Change(m.Id, c => c.Options[oi].Subs[sj].Enabled = !was, "set", m.Id, sref, was ? "off" : "on");
-                        else if (!was)
+                        if (!was)
                             Change(m.Id, c => { for (int k = 0; k < c.Options[oi].Subs.Count; k++) c.Options[oi].Subs[k].Enabled = k == sj; },
                                    "set", m.Id, sref, "on", "--only");
                     }));
@@ -4118,15 +4315,15 @@ namespace QuickDeploy
             // a picture when the mod has one; else only the words, all of them (the name and
             // the author's description wrap; nothing is cut or left to a tooltip)
             bool hasPicture = LoadImage(icon) != null;
-            var b = new Button { Width = hasPicture ? 140 : 200, Margin = new Thickness(0, 0, 8, 8), Cursor = Cursors.Hand, Template = Plain(), FocusVisualStyle = null, Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Top };
+            var b = new Button { Width = hasPicture ? (bigCards ? 220 : 140) : 200, Margin = new Thickness(0, 0, 8, 8), Cursor = Cursors.Hand, Template = Plain(), FocusVisualStyle = null, Foreground = B("Ink"), VerticalAlignment = VerticalAlignment.Top };
             var frame = new Border { BorderBrush = on ? B("Yellow") : B("Grid"), BorderThickness = new Thickness(2), Background = B("Ground900"), Padding = new Thickness(8) };
             var grid = new Grid();
             var col = new StackPanel();
             if (hasPicture)
                 col.Children.Add(new Border
                 {
-                    Height = 120, BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Opacity = on ? 1 : 0.6,
-                    Child = Picture(icon, GlyphPart, 0, on ? "Yellow" : "Muted", 56),
+                    Height = bigCards ? 200 : 120, BorderBrush = B("Grid"), BorderThickness = new Thickness(1), Background = B("Ground700"), Opacity = on ? 1 : 0.6,
+                    Child = (bigCards ? Full(icon) : null) ?? Picture(icon, GlyphPart, 0, on ? "Yellow" : "Muted", 56),
                 });
             // the tick sits top right: words beside it keep clear of it
             var right = hasPicture ? 0 : 26;
@@ -4151,8 +4348,15 @@ namespace QuickDeploy
 
         void RenderDetail()
         {
+            FillPreview();
             Detail.Children.Clear();
             var m = st?.Mods.FirstOrDefault(x => x.Id == selectedId);
+            if (m == null && st != null && groupView && groupPath.Count > 0)
+            {
+                var g = st.Groups.FirstOrDefault(x => x.Id == groupPath[groupPath.Count - 1]);
+                if (g != null) GroupDetail(g);
+                return;
+            }
             if (m == null) return;
 
             // the picture, the name and its files
@@ -4264,6 +4468,8 @@ namespace QuickDeploy
             else if (st.ProfilesOn && !m.InProfile) Fact("d_order", Texts.Get("pf_outside"));
             else Fact("d_order", Texts.F("d_order_v", Num(m), st.ProfilesOn ? st.Mods.Count(x => x.InProfile && !x.Loader) : st.Mods.Count(x => !x.Loader)), true);
             if (!m.Loader) Fact("d_opts", m.Options.Count > 0 ? m.Chosen + " / " + m.Choices : "—");
+            if (!m.Loader && st.Groups.Count > 0)
+                Fact("d_group", m.Group != null ? string.Join(" › ", PathTo(m.Group).Select(x => x.Name)) : Texts.Get("g_top"));
             Fact("d_folder", m.Path, true, true);
             {
                 // remove from the library, and open the folder. A row that does not fit wraps onto
@@ -4291,10 +4497,30 @@ namespace QuickDeploy
             }
             if (!string.IsNullOrEmpty(m.Source) && m.Source != m.Path) Fact("d_source", m.Source, true, true);
             Detail.Children.Add(facts);
+            // in the groups the options are chosen in the preview (Space), not here: a long list of
+            // them kept the details scrolling (the user, 2026-10-27)
+            if (groupView && m.Options.Count > 0)
+            {
+                var choose = new Button { Content = Texts.Get("pv_open"), Style = (Style)FindResource("Ghost"), MinHeight = 36, Margin = new Thickness(0, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Stretch };
+                choose.Click += (s, e) => { if (preview == null) OpenPreview(); else preview.Activate(); };
+                Detail.Children.Add(choose);
+            }
             // its scripts: what starts them, and whether they will run (the user, 2026-10-26);
             // before its updates, which matter less than whether it runs at all
             var luaCard = LuaCard(m);
             if (luaCard != null) Detail.Children.Add(luaCard);
+            // a script name another mod declares too: only one of them runs (the later in the order)
+            foreach (var issue in (st.Lua?.Issues ?? new List<(string Kind, List<string> Mods, string Detail)>()).Where(i => i.Kind == "same_name" && i.Mods.Contains(m.Id)))
+            {
+                var box = new StackPanel();
+                var sameHead = Selectable.Text(Texts.Get("lua_same_title"), 14, "Yellow");
+                sameHead.FontWeight = FontWeights.SemiBold;
+                box.Children.Add(sameHead);
+                box.Children.Add(Small(Texts.F("lua_same_info", issue.Detail), new Thickness(0, 6, 0, 0)));
+                box.Children.Add(Small(Texts.Get("pick_runs_label"), new Thickness(0, 8, 0, 4)));
+                box.Children.Add(WinnerRows(issue.Mods.ToList(), issue.Mods[0], "pick_runs_now"));
+                Detail.Children.Add(new Border { BorderBrush = B("Yellow"), BorderThickness = new Thickness(1), Padding = new Thickness(12), Margin = new Thickness(0, 16, 0, 0), Child = box });
+            }
             Detail.Children.Add(UpdatePanel(m));
 
             // what a deploy does to it
@@ -4319,7 +4545,22 @@ namespace QuickDeploy
                 var clash = Selectable.Text(Texts.F(c.ManagedBoot ? "managed_boot" : c.Same ? "same" : "clash", c.Count, others), 14, c.Same || c.ManagedBoot ? "Ink" : "Yellow");
                 clash.FontWeight = FontWeights.SemiBold;
                 box.Children.Add(clash);
-                box.Children.Add(Small(c.ManagedBoot ? Texts.Get("managed_boot_tip") : c.Same ? Texts.Get("same_tip") : Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
+                // a boot the loader coordinates has nothing to choose
+                if (c.ManagedBoot) box.Children.Add(Small(Texts.Get("managed_boot_tip"), new Thickness(0, 6, 0, 0)));
+                else if (c.Same) box.Children.Add(Small(Texts.Get("same_tip"), new Thickness(0, 6, 0, 0)));
+                else
+                {
+                    // the one in effect shown at once, and chosen here by a click (the user, 2026-10-27:
+                    // it took a button and a window to see it)
+                    var ids = c.Mods.Select(n => st.Mods.FirstOrDefault(x => x.Name == n)?.Id).Where(id => id != null).ToList();
+                    var winner = st.Mods.FirstOrDefault(x => x.Name == c.Winner)?.Id;
+                    if (ids.Count > 1)
+                    {
+                        box.Children.Add(Small(Texts.Get("pick_wins_label"), new Thickness(0, 8, 0, 4)));
+                        box.Children.Add(WinnerRows(ids, winner, "pick_now"));
+                    }
+                    else box.Children.Add(Small(Texts.F("clash_win", c.Winner), new Thickness(0, 6, 0, 0)));
+                }
                 // which resources (the user, 2026-10-25): type, then the name or the id
                 const int lines = 8;
                 var list = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
@@ -4622,23 +4863,37 @@ namespace QuickDeploy
             var many = Taken(m);
             if (many.Count > 1)
             {
-                var on = new MenuItem { Header = Texts.F("many_on", many.Count) };
-                on.Click += (s, e) => { foreach (var x in many.Where(x => !x.Enabled)) Change(x.Id, c => c.Enabled = true, "enable", x.Id); };
-                menu.Items.Add(on);
-                var off = new MenuItem { Header = Texts.F("many_off", many.Count) };
-                off.Click += (s, e) => { foreach (var x in many.Where(x => x.Enabled)) Change(x.Id, c => c.Enabled = false, "disable", x.Id); };
-                menu.Items.Add(off);
+                // only the switch that does something: all on, Turn off alone; all off, Turn on alone
+                // (the user, 2026-10-27: the menu had grown long)
+                if (many.Any(x => !x.Enabled))
+                {
+                    var on = new MenuItem { Header = Texts.F("many_on", many.Count) };
+                    on.Click += (s, e) => { foreach (var x in many.Where(x => !x.Enabled)) Change(x.Id, c => c.Enabled = true, "enable", x.Id); };
+                    menu.Items.Add(on);
+                }
+                if (many.Any(x => x.Enabled))
+                {
+                    var off = new MenuItem { Header = Texts.F("many_off", many.Count) };
+                    off.Click += (s, e) => { foreach (var x in many.Where(x => x.Enabled)) Change(x.Id, c => c.Enabled = false, "disable", x.Id); };
+                    menu.Items.Add(off);
+                }
                 // the top and bottom of the screen: with the winner shown at the top, the other
                 // ends of the load order. One move of them all, in the order they have
                 string[] To(string end) => new[] { "move" }.Concat(many.Select(x => x.Id)).Concat(new[] { end }).ToArray();
                 ProfileItems(menu, many);
-                var up = new MenuItem { Header = Texts.F("many_top", many.Count) };
-                up.Click += (s, e) => Run(To(Texts.TopWins ? "--bottom" : "--top"));
-                menu.Items.Add(up);
-                var down = new MenuItem { Header = Texts.F("many_bottom", many.Count) };
-                down.Click += (s, e) => Run(To(Texts.TopWins ? "--top" : "--bottom"));
-                menu.Items.Add(down);
+                // the order's ends only where the order is shown: in the groups which one wins is
+                // chosen in a conflict's card
+                if (!groupView)
+                {
+                    var up = new MenuItem { Header = Texts.F("many_top", many.Count) };
+                    up.Click += (s, e) => Run(To(Texts.TopWins ? "--bottom" : "--top"));
+                    menu.Items.Add(up);
+                    var down = new MenuItem { Header = Texts.F("many_bottom", many.Count) };
+                    down.Click += (s, e) => Run(To(Texts.TopWins ? "--top" : "--bottom"));
+                    menu.Items.Add(down);
+                }
                 menu.Items.Add(TagMenu(m));
+                menu.Items.Add(ModGroupMenu(many));
                 if (many.Any(x => x.Channel == "Nexus Mods" || x.Channel == "GitHub"))
                 {
                     var match = new MenuItem { Header = Texts.F("many_match", many.Count) };
@@ -4664,19 +4919,30 @@ namespace QuickDeploy
                 menu.Items.Add(del);
                 return menu;
             }
-            // only what this menu alone can do: opening the folder, matching the source,
-            // removing and deleting are all on the mod's own page (the user, 2026-10-24:
-            // the menu had grown too long)
+            // opening the folder and matching the source are on the mod's own page (the user,
+            // 2026-10-24: the menu had grown too long); removing and deleting are here too, as for
+            // several mods (the user, 2026-10-27)
             ProfileItems(menu, Taken(m));
             Item("rename", () => RenameMod(m));
             menu.Items.Add(TagMenu(m));
+            menu.Items.Add(ModGroupMenu(new List<ModRow> { m }));
             // the top and bottom of the screen, as the list is shown
             bool topWins = Texts.TopWins;
-            Item(topWins ? "top_wins_top" : "top", () => Run("move", m.Id, topWins ? "--bottom" : "--top"));
-            Item(topWins ? "top_wins_bottom" : "bottom", () => Run("move", m.Id, topWins ? "--top" : "--bottom"));
+            if (!groupView)
+            {
+                Item(topWins ? "top_wins_top" : "top", () => Run("move", m.Id, topWins ? "--bottom" : "--top"));
+                Item(topWins ? "top_wins_bottom" : "bottom", () => Run("move", m.Id, topWins ? "--top" : "--bottom"));
+            }
             menu.Items.Add(new Separator());
             Item("replace_zip", () => { var p = PickZip(); if (p != null) Run("replace", m.Id, p); });
             Item("replace_folder", () => { var p = PickFolder(); if (p != null) Run("replace", m.Id, p); });
+            menu.Items.Add(new Separator());
+            // the same questions as the details' buttons, asked once the menu has closed
+            Item("remove_menu", () => Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (Dialog.Ask(this, Texts.F("remove_ask", m.Name), Texts.Get("remove_btn"))) Run("remove", m.Id);
+            }), DispatcherPriority.ContextIdle));
+            Item("delete_menu", () => Dispatcher.BeginInvoke(new Action(() => DeleteFromDisk(m)), DispatcherPriority.ContextIdle), true);
             return menu;
         }
 
@@ -4853,6 +5119,7 @@ namespace QuickDeploy
         {
             if (checking || !checkingOne.Add(m.Id)) return;
             RenderList();
+            RenderDetail();
             string was = null, failed = null;
             UpdateInfo u = null;
             try
@@ -4873,7 +5140,7 @@ namespace QuickDeploy
             if (failed != null)
             {
                 Foot(Texts.F("failed", failed), "Yellow");
-                if (st != null) RenderList();
+                if (st != null) { RenderList(); RenderDetail(); }
                 return;
             }
             updates[u.ModId] = u;
@@ -4967,6 +5234,15 @@ namespace QuickDeploy
             // the buttons in two columns of the same width, the odd one last across both:
             // a row of them wrapped into a ragged second line (the user, 2026-10-24)
             var buttons = new List<Button>();
+            var check = new Button
+            {
+                Content = Texts.Get(checkingOne.Contains(m.Id) ? "up_checking_btn" : "up_check"),
+                Style = (Style)FindResource("Ghost"), MinHeight = 34,
+                IsEnabled = !checking && !checkingOne.Contains(m.Id),
+                ToolTip = Texts.Get("up_check_row_tip"),
+            };
+            check.Click += (s, e) => CheckOne(m);
+            buttons.Add(check);
             if (apply)
             {
                 var go = new Button { Content = Texts.Get(u.Status == "update" ? "up_apply" : "up_apply_latest"), Style = (Style)FindResource("Primary"), MinHeight = 34 };
@@ -5229,9 +5505,20 @@ namespace QuickDeploy
         /// for as long as the wheel turned, 4 to 10 seconds (the user, 2026-10-25).</summary>
         void Wheel(object sender, MouseWheelEventArgs e)
         {
+            if (!e.Handled && e.Delta != 0 && Keyboard.Modifiers == ModifierKeys.Shift && GroupScroll.IsVisible &&
+                e.OriginalSource is Visual sv && GroupScroll.IsAncestorOf(sv))
+            {
+                // the groups' columns sideways with Shift, as browsers do (the user, 2026-10-27)
+                GroupScroll.ScrollToHorizontalOffset(GroupScroll.HorizontalOffset - e.Delta);
+                e.Handled = true;
+                return;
+            }
             if (e.Handled || e.Delta == 0 || Keyboard.Modifiers != ModifierKeys.None) return;
             var from = e.OriginalSource as DependencyObject;
             var scrolls = Scrolls(from).ToList();
+            // the jump button floats over the list, outside its scroll: a wheel on it turns the
+            // list still (the user, 2026-10-27: the wheel stopped with the pointer on the button)
+            if (flingLayer != null && from is Visual v && flingLayer.IsAncestorOf(v)) scrolls = Scrolls(List).ToList();
             bool fresh = unchecked(e.Timestamp - wheelLast) > WheelRestMs || wheelTarget == null ||
                          !wheelTarget.IsVisible || !scrolls.Contains(wheelTarget);
             wheelLast = e.Timestamp;
@@ -5378,6 +5665,7 @@ namespace QuickDeploy
             StoragePage.Visibility == Visibility.Visible ? StoragePage
             : TagsPage.Visibility == Visibility.Visible ? TagsPage
             : DownloadPage.Visibility == Visibility.Visible ? DownloadPage
+            : SettingsPage.Visibility == Visibility.Visible ? SettingsPage
             : ListScroll;
 
         /// <summary>Whether the pointer is inside the menu itself.</summary>
@@ -6045,12 +6333,19 @@ namespace QuickDeploy
             Refresh();
         }
 
-        /// <summary>The settings, in a window of its own (the user, 2026-10-24): the language, whether
-        /// the explaining lines are shown, who made this and where it comes from.</summary>
-        void Settings_Click(object sender, RoutedEventArgs e)
+        /// <summary>The gear: the settings page, or back to the page it was opened from.</summary>
+        void Settings_Click(object sender, RoutedEventArgs e) =>
+            ShowPage(SettingsPage.Visibility == Visibility.Visible ? pageBack : "settings");
+
+        /// <summary>The settings page (the user, 2026-10-24; a page, not a window, since
+        /// 2026-10-27): the language, whether the explaining lines are shown, who made this and
+        /// where it comes from.</summary>
+        void RenderSettings()
         {
-            var w = Dialog.Blank(this, out var body);
-            body.Children.Add(new TextBlock { Text = Texts.Get("settings"), FontSize = 20, FontWeight = FontWeights.Bold, Foreground = B("Ink") });
+            SettingsBox.Children.Clear();
+            SettingsBox.Children.Add(new TextBlock { Text = Texts.Get("settings"), FontSize = 28, FontWeight = FontWeights.Bold });
+            var body = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            SettingsBox.Children.Add(body);
 
             // the language
             body.Children.Add(Label("set_lang", new Thickness(0, 20, 0, 6)));
@@ -6058,8 +6353,8 @@ namespace QuickDeploy
             var pair = new StackPanel { Orientation = Orientation.Horizontal };
             var zh = new RadioButton { Style = (Style)FindResource("Segment"), GroupName = "setlang", Content = "中文", MinWidth = 96, IsChecked = Texts.Zh };
             var en = new RadioButton { Style = (Style)FindResource("Segment"), GroupName = "setlang", Content = "English", MinWidth = 96, IsChecked = !Texts.Zh };
-            zh.Click += (s, e2) => { Language(true); w.Close(); Settings_Click(sender, e); };
-            en.Click += (s, e2) => { Language(false); w.Close(); Settings_Click(sender, e); };
+            zh.Click += (s, e2) => Language(true);
+            en.Click += (s, e2) => Language(false);
             pair.Children.Add(zh);
             pair.Children.Add(en);
             langs.Child = pair;
@@ -6135,11 +6430,6 @@ namespace QuickDeploy
             body.Children.Add(fline);
             body.Children.Add(Small(Texts.Get("set_fling_note"), new Thickness(0, 8, 0, 0)));
 
-            // how the list is worked
-            body.Children.Add(Label("set_keys", new Thickness(0, 20, 0, 6)));
-            foreach (var key in new[] { "set_key_rename", "set_key_many" })
-                body.Children.Add(new TextBlock { Text = "· " + Texts.Get(key), Foreground = B("Ink"), FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 2) });
-
             // this program's own updates (the user, 2026-10-25)
             body.Children.Add(Label("set_update", new Thickness(0, 20, 0, 6)));
             body.Children.Add(new TextBlock
@@ -6206,6 +6496,56 @@ namespace QuickDeploy
             body.Children.Add(autoLine);
             body.Children.Add(Small(Texts.Get(SelfUpdate.Official ? "self_auto_note_official" : "self_auto_note_dev"), new Thickness(0, 8, 0, 0)));
 
+            // a problem report to send with a question (the user, 2026-10-29: one click, here)
+            body.Children.Add(Label("set_report", new Thickness(0, 20, 0, 6)));
+            body.Children.Add(Small(Texts.Get("report_note"), new Thickness(0, 0, 0, 10)));
+            var reportBox = new StackPanel();
+            body.Children.Add(reportBox);
+            string reportPath = null, reportFailed = null;
+            bool packing = false;
+            void FillReport()
+            {
+                reportBox.Children.Clear();
+                if (packing) reportBox.Children.Add(Small(Texts.Get("report_making"), new Thickness(0, 0, 0, 10)));
+                else if (reportFailed != null)
+                    reportBox.Children.Add(new TextBlock { Text = Texts.F("failed", reportFailed), Foreground = B("Yellow"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) });
+                else if (reportPath != null)
+                {
+                    reportBox.Children.Add(new TextBlock { Text = Texts.Get("report_done"), Foreground = B("Ink"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 4) });
+                    var where = Selectable.Text(reportPath, 11, "Muted", Mono);
+                    where.Margin = new Thickness(0, 0, 0, 10);
+                    reportBox.Children.Add(where);
+                }
+                var btns = new StackPanel { Orientation = Orientation.Horizontal };
+                var make = new Button { Content = Texts.Get("report_do"), Style = (Style)FindResource("Ghost"), MinHeight = 36, IsEnabled = !packing };
+                make.Click += async (s, e2) =>
+                {
+                    packing = true;
+                    reportFailed = null;
+                    FillReport();
+                    (string Path, string Summary) made = default;
+                    var r = await Queued(() => Cli.Call(() => { made = Report.Write(Library.Load(), Store.GameDir(null, false)); return made.Path; }));
+                    packing = false;
+                    if (r.Ok)
+                    {
+                        reportPath = made.Path;
+                        try { Clipboard.SetText(made.Summary); } catch (Exception) { }      // another program holding the clipboard: the zip is enough
+                        ShowInFolder(reportPath);
+                    }
+                    else { reportPath = null; reportFailed = r.Message; }
+                    FillReport();
+                };
+                btns.Children.Add(make);
+                if (reportPath != null && !packing)
+                {
+                    var show = new Button { Content = Texts.Get("report_open"), Style = (Style)FindResource("Ghost"), MinHeight = 36, Margin = new Thickness(8, 0, 0, 0) };
+                    show.Click += (s, e2) => ShowInFolder(reportPath);
+                    btns.Children.Add(show);
+                }
+                reportBox.Children.Add(btns);
+            }
+            FillReport();
+
             // who made it, and where it comes from (last)
             body.Children.Add(Label("set_about", new Thickness(0, 20, 0, 6)));
             // which library this window is reading. Two windows on two libraries look exactly
@@ -6218,11 +6558,50 @@ namespace QuickDeploy
             });
             body.Children.Add(Link(Texts.Get("author_name"), Texts.Get("author_url")));
             body.Children.Add(Link(Texts.Get("project_name"), Texts.Get("project_url")));
+        }
 
-            var close = new Button { Content = Texts.Get("close"), Style = (Style)FindResource("Primary"), MinWidth = 96, MinHeight = 38, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 24, 0, 0) };
-            close.Click += (s, e2) => w.Close();
-            body.Children.Add(close);
-            w.ShowDialog();
+        /// <summary>The mods of a conflict as lines: picture, name, the one that wins now marked
+        /// (tagKey). A click on another makes it win: it moves just after the last of the others in
+        /// the load order (the last one wins); the others keep their places.</summary>
+        UIElement WinnerRows(List<string> ids, string now, string tagKey)
+        {
+            var mods = ids.Select(id => st.Mods.FirstOrDefault(x => x.Id == id)).Where(x => x != null).ToList();
+            var rowsBox = new StackPanel();
+            foreach (var x in mods)
+            {
+                bool wins = x.Id == now;
+                var line = new DockPanel();
+                var pic = Picture(x.Icon, GlyphMod, 28, "Blue", 18);
+                DockPanel.SetDock(pic, Dock.Left);
+                line.Children.Add(pic);
+                if (wins)
+                {
+                    var tag = new Border { Background = B("Yellow"), Padding = new Thickness(8, 2, 8, 2), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
+                                          Child = new TextBlock { Text = Texts.Get(tagKey), FontSize = 13, FontWeight = FontWeights.Bold, Foreground = B("TapeInk") } };
+                    DockPanel.SetDock(tag, Dock.Right);
+                    line.Children.Add(tag);
+                }
+                line.Children.Add(new TextBlock { Text = x.Name, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
+                                                  TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = x.Name });
+                var row = new Border
+                {
+                    BorderBrush = B(wins ? "Yellow" : "Grid"), BorderThickness = new Thickness(1), Background = B("Ground900"),
+                    Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 0, 6), Child = line, Cursor = wins ? Cursors.Arrow : Cursors.Hand,
+                };
+                if (!wins)
+                {
+                    row.MouseEnter += (s, e) => row.BorderBrush = B("Muted");
+                    row.MouseLeave += (s, e) => row.BorderBrush = B("Grid");
+                    var id = x.Id;
+                    row.MouseLeftButtonUp += (s, e) =>
+                    {
+                        var last = mods.Where(o => o.Id != id).OrderBy(o => o.Index).Last();
+                        if (mods.First(o => o.Id == id).Index < last.Index) Run("move", id, "--after", last.Id);
+                    };
+                }
+                rowsBox.Children.Add(row);
+            }
+            return rowsBox;
         }
 
         /// <summary>A resource type as the conflicts name it: in words for the common ones, else the engine's name.</summary>
@@ -6236,31 +6615,6 @@ namespace QuickDeploy
             b.Click += (s, e) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             return b;
         }
-
-        /// <summary>To the top of the list and to the end of it. A library grows at the end, so
-        /// the one that matters is the end (the user, 2026-10-25).</summary>
-        void JumpButtons()
-        {
-            Mark(TopBtn, GlyphTop, "jump_top");
-            Mark(BottomBtn, GlyphBottom, "jump_bottom");
-        }
-
-        void Mark(Button b, string glyph, string tip)
-        {
-            b.Template = Plain();
-            b.Cursor = Cursors.Hand;
-            b.FocusVisualStyle = null;
-            b.ToolTip = Texts.Get(tip);
-            b.Content = new Path
-            {
-                Data = Geometry.Parse(glyph), Width = 17, Height = 17, Stretch = Stretch.Uniform, Margin = new Thickness(8),
-                Stroke = B("Muted"), StrokeThickness = 2, StrokeEndLineCap = PenLineCap.Round, StrokeStartLineCap = PenLineCap.Round,
-            };
-        }
-
-        void Top_Click(object sender, RoutedEventArgs e) => ListScroll.ScrollToTop();
-
-        void Bottom_Click(object sender, RoutedEventArgs e) => ListScroll.ScrollToBottom();
 
         /// <summary>Where the list was left, so a library that grows at the end does not have to
         /// be scrolled down again on every start (the user, 2026-10-25). Kept in gui.json, taken
@@ -6360,6 +6714,14 @@ namespace QuickDeploy
             if (Directory.Exists(path)) Process.Start("explorer.exe", Cli.Quote(path));
         }
 
+        /// <summary>Explorer opened on a file's folder with the file selected.</summary>
+        static void ShowInFolder(string file)
+        {
+            if (!File.Exists(file)) { OpenFolder(IOPath.GetDirectoryName(file)); return; }
+            try { Process.Start("explorer.exe", "/select," + Cli.Quote(file)); }
+            catch (System.ComponentModel.Win32Exception) { }
+        }
+
         void Purge_Click(object sender, RoutedEventArgs e)
         {
             if (st != null && st.GameDir == null) ChooseGame();
@@ -6435,9 +6797,13 @@ namespace QuickDeploy
             int added = 0;
             foreach (var p in many) if (await Act(() => Cli.Run("add", p), false)) added++;
             var fresh = Library.Load().Mods.Where(m => !before.Contains(m.Id)).ToList();
-            if (fresh.Count == 0) return;
+            if (fresh.Count == 0)
+            {
+                if (added > 0) Foot(Texts.F("drop_processed", Texts.N(added)), "Blue");
+                return;
+            }
             Current(fresh[0].Id);
-            Foot(Texts.F("drop_done", Texts.N(added)), "Blue");
+            Foot(Texts.F("drop_processed", Texts.N(added)), "Blue");
             AdviseDrive(fresh);
         }
 

@@ -118,7 +118,7 @@ namespace Hd2Mod
 
         // what was found in each archive, kept between runs in lua_scan.json by the archive's
         // size and time; a new version of the checks reads every archive again
-        const int ScanVersion = 5;
+        const int ScanVersion = 6;      // 5: UsesChefApi reads scopes (HUDdle, 2026-10-27); 6: HD2FM1 data rows, guarded jit.off()
 
         /// <summary>Chef Shared Loader 1.2.1 reads no Lua resource whose row size is over this
         /// (`MAX_LUA = 4 * 1024 * 1024`, `if size > MAX_LUA` in its core; its log: "Lua resource(s)
@@ -407,20 +407,51 @@ namespace Hd2Mod
             t[i + 2].Kind == LuaSyntax.T.Name && t[i + 2].Text == "off" &&
             t[i + 3].Kind == '(' && t[i + 4].Kind == ')';
 
-        /// <summary>local chef = ... (Chef Shared Loader hands its interface to the script as its
-        /// argument), then chef.x / chef:x with chef itself never tested (if chef, not chef,
-        /// chef and, type(chef), chef == ...): nothing else gives that argument.</summary>
+        /// <summary>local chef = ... at the script's top (Chef Shared Loader hands its interface to
+        /// the script as its argument), then chef.x / chef:x with that chef never tested (if chef,
+        /// not chef, chef and, type(chef), chef == ...): nothing else gives that argument. Scopes
+        /// are followed: a chef a function or block of the script declares for itself (a parameter,
+        /// a local) is another variable, and its tests say nothing of the script's (HUDdle 0.4.9,
+        /// whose modules test their own chef, was taken for a mod that needs no Chef and failed
+        /// under Boot Mod Loader: "attempt to index local 'chef' (a nil value)", 2026-10-27).</summary>
         public static bool UsesChefApi(List<LuaSyntax.Token> t)
         {
             const int Name = LuaSyntax.T.Name;
-            bool takes = false;
-            for (int i = 0; i + 3 < t.Count && !takes; i++)
-                takes = t[i].Kind == LuaSyntax.T.Local && t[i + 1].Kind == Name && t[i + 1].Text == "chef" && t[i + 2].Kind == '=' && t[i + 3].Kind == LuaSyntax.T.Dots;
-            if (!takes) return false;
-            bool used = false, tested = false;
+            bool IsChef(int k) => k >= 0 && k < t.Count && t[k].Kind == Name && t[k].Text == "chef";
+            // the blocks open now, innermost last: whether each declares a chef of its own (from the
+            // declaration on, which is where Lua's scope begins)
+            var shadows = new List<bool> { false };
+            bool takes = false, used = false, tested = false;
             for (int i = 0; i < t.Count; i++)
             {
-                if (t[i].Kind != Name || t[i].Text != "chef") continue;
+                int kind = t[i].Kind;
+                if (kind == LuaSyntax.T.Function)
+                {
+                    // its parameters, up to the closing bracket
+                    bool own = false;
+                    int k = i + 1;
+                    while (k < t.Count && t[k].Kind != '(') k++;
+                    for (k++; k < t.Count && t[k].Kind != ')'; k++) if (IsChef(k)) own = true;
+                    shadows.Add(own);
+                    continue;
+                }
+                if (kind == LuaSyntax.T.Do || kind == LuaSyntax.T.If || kind == LuaSyntax.T.Repeat) { shadows.Add(false); continue; }
+                if (kind == LuaSyntax.T.End || kind == LuaSyntax.T.Until) { if (shadows.Count > 1) shadows.RemoveAt(shadows.Count - 1); continue; }
+                if (kind == LuaSyntax.T.Local)
+                {
+                    // local function chef / local a, chef, b
+                    var names = new List<int>();
+                    int k = i + 1;
+                    if (k < t.Count && t[k].Kind == LuaSyntax.T.Function) { if (IsChef(k + 1)) shadows[shadows.Count - 1] = true; continue; }
+                    while (k < t.Count && t[k].Kind == Name) { names.Add(k); k++; if (k < t.Count && t[k].Kind == ',') k++; else break; }
+                    if (!names.Any(IsChef)) continue;
+                    // the script's own: alone, at its top, from its argument
+                    if (!takes && shadows.Count == 1 && names.Count == 1 && k + 1 < t.Count && t[k].Kind == '=' && t[k + 1].Kind == LuaSyntax.T.Dots) takes = true;
+                    else shadows[shadows.Count - 1] = true;
+                    i = k - 1;
+                    continue;
+                }
+                if (!takes || !IsChef(i) || shadows.Any(x => x)) continue;
                 int prev = i > 0 ? t[i - 1].Kind : -1, next = i + 1 < t.Count ? t[i + 1].Kind : -1;
                 if (prev == '.' || prev == ':') continue;                    // a field of something else
                 bool field = next == '.' || next == ':' || next == '[';

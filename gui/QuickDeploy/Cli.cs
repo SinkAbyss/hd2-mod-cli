@@ -106,6 +106,8 @@ namespace QuickDeploy
         public string SiteAuthor, SiteSummary, SiteVersion;
         /// <summary>The player's own labels for this mod.</summary>
         public List<string> Tags = new List<string>();
+        /// <summary>The group the player put it in, else null (Groups: shown only).</summary>
+        public string Group;
         /// <summary>The labels the mod's own manifest declares: read only.</summary>
         public List<string> AutoTags = new List<string>();
         /// <summary>The version shown (the recorded one, else one found in a name) and where it was
@@ -139,6 +141,12 @@ namespace QuickDeploy
                 return "partial";
             }
         }
+    }
+
+    /// <summary>A group of mods: a folder in the window, only a name in the library.</summary>
+    class GroupRow
+    {
+        public string Id, Name, Parent;
     }
 
     class Clash
@@ -194,6 +202,8 @@ namespace QuickDeploy
         public List<string> Profiles = new List<string>();
         /// <summary>Every label the library knows, whether or not a mod carries it.</summary>
         public List<string> Tags = new List<string>();
+        /// <summary>The player's groups, in the order they were made (Groups).</summary>
+        public List<GroupRow> Groups = new List<GroupRow>();
         public List<Clash> Clashes = new List<Clash>();
         /// <summary>Whether resources can be named (HD2SDK's list was found).</summary>
         public bool ResourceNames;
@@ -290,6 +300,8 @@ namespace QuickDeploy
             }
             foreach (var x in List(d, "deletes")) if (x is string f) s.Deletes.Add(f);
             foreach (var t in List(d, "tags")) if (t is string tag) s.Tags.Add(tag);
+            foreach (var g in List(d, "groups").OfType<Dictionary<string, object>>())
+                s.Groups.Add(new GroupRow { Id = Str(g, "id"), Name = Str(g, "name"), Parent = Str(g, "parent") });
             var bs = Json.Obj(d, "deploying");
             if (bs != null) s.Deploying = new BusyBlock { Pid = Int(bs, "pid"), Since = Str(bs, "since") };
             var ch = Json.Obj(d, "check");
@@ -365,6 +377,7 @@ namespace QuickDeploy
                     row.Options.Add(opt);
                 }
                 foreach (var t in List(m, "tags")) if (t is string tag) row.Tags.Add(tag);
+                row.Group = Str(m, "group");
                 foreach (var t in List(m, "auto_tags")) if (t is string tag) row.AutoTags.Add(tag);
                 foreach (var f in List(m, "files").OfType<Dictionary<string, object>>())
                     row.Files.Add(new FileRow { Name = Str(f, "name"), Src = Str(f, "src"), Action = Str(f, "action"), From = Str(f, "from"),
