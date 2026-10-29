@@ -150,6 +150,8 @@ namespace Hd2Mod
             Cmd("which", new Spec { Help = "which mod a patch file or archive comes from", Positionals = new[] { "what" }, Run = Which }),
             Cmd("state", new Spec { Help = "everything about the library and the game folder, as JSON (for a window)",
                                     Flags = new[] { "--verify" }, Run = State }),
+            Cmd("report", new Spec { Help = "a zip to send with a question: the state, the deploy history, Boot Mod Loader's log and the crash dumps' names (never the dumps, never the sign-in; your user folder written as %USERPROFILE%); on the desktop unless --out",
+                                     Values = new[] { "--out" }, Run = ReportCmd }),
             Cmd("conflicts", new Spec { Help = "resources that more than one mod ships (the last in the order wins)",
                                         Flags = new[] { "-v", "--verbose" }, Run = Conflicts }),
         };
@@ -191,7 +193,7 @@ namespace Hd2Mod
         /// record or the game folder.</summary>
         static readonly HashSet<string> ReadOnly = new HashSet<string>
         {
-            "folders", "list", "tags", "groups", "status", "check", "which", "state", "conflicts", "profiles",
+            "folders", "list", "tags", "groups", "status", "check", "which", "state", "conflicts", "profiles", "report",
         };
 
         static bool Writes(string command, Args a) =>
@@ -1296,5 +1298,12 @@ namespace Hd2Mod
 
         static void State(Args a, TextWriter o) =>
             o.WriteLine(Json.Write(StateDoc.Build(Library.Load(), Store.GameDir(null, false), a.Flag("--verify")), true));
+
+        static void ReportCmd(Args a, TextWriter o)
+        {
+            var (path, summary) = Report.Write(Library.Load(), Store.GameDir(null, false), a.Value("--out"));
+            o.WriteLine("report written: " + path);
+            o.Write(summary);
+        }
     }
 }

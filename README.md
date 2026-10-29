@@ -282,6 +282,9 @@ All of it is read outside the game, before a deploy: nothing runs in the game. T
   the next start); until one is chosen, it follows Windows.
 - `HD2 Mod Quick Deploy.exe --select TEXT` opens the first mod whose name holds
   TEXT.
+- **Asking about a problem?** Settings → *Problem report* → *Export problem
+  report* writes one zip to the desktop and puts a short summary on the
+  clipboard: send the zip with your question (`hd2qd report` does the same).
 - **hd2qd can be run by an AI assistant.** Everything is kept in
   `%USERPROFILE%\.hd2-mod-cli`, not in AppData: a program started by a packaged
   app (most desktop AI assistants are) has a folder it makes under `%APPDATA%`
@@ -343,6 +346,7 @@ A change made on the command line shows in an open window half a second later.
 | `lua-syntax FILE...` | Whether Lua files compile on the game's Lua (PUC 5.1, no LuaJIT): OK, or the line and why. |
 | `conflicts [-v]` | Resources that more than one mod ships, and which one wins; the ones every mod ships byte for byte alike are named as shared, not as a conflict. `-v` lists each resource's type and id, and its name from HD2SDK's name list when HD2SDK is installed. |
 | `state [--verify]` | Everything the window shows, as JSON. |
+| `report [--out PATH]` | A zip to send with a question (on the desktop unless `--out`): the state, the settings, the deploy history, the Nexus Mods download history, Boot Mod Loader's log and the names of the game's crash dumps. Never the dumps themselves and never the sign-in; your user folder is written as `%USERPROFILE%`. A short summary is printed too. |
 
 `MOD` is the mod's number in `list`, its name, or a unique part of its name.
 
@@ -585,6 +589,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
 - **请勿直接修改游戏目录中已部署的 patch 文件**：硬链接与 mod 库中的文件为同一文件，修改会同时影响 mod 库。恢复原版不影响 mod 库。
 - 游戏运行时无法部署或恢复原版。
 - 界面语言为本程序独立的设置（设置窗口中选择，下次启动时保留）；未设置时跟随 Windows 的语言。
+- **反馈问题时**：在设置页“问题反馈”中点击“导出诊断包”，桌面上会生成一个 zip 文件，简要摘要同时复制到剪贴板；提问时附上该 zip 即可（命令行为 `hd2qd report`）。诊断包不含崩溃转储和 Nexus Mods 登录信息，Windows 用户文件夹会写成 `%USERPROFILE%`。
 - **hd2qd 可以由 AI 助手调用。** 所有数据保存在 `%USERPROFILE%\.hd2-mod-cli`，而不是 AppData：由打包应用（多数桌面版 AI 助手都是）启动的程序，在 `%APPDATA%` 下新建的文件夹会被 Windows 放进该应用的私有目录，其他程序都读不到，mod 库会在没有任何报错的情况下分成两份。如果仍将 `HD2MOD_HOME` 设在 AppData 下，hd2qd 会在写入前检查，并拒绝执行、说明写入本会落在何处。
 
 ### 命令行 hd2qd
@@ -598,6 +603,7 @@ mod 库与游戏不在同一分区时无法使用硬链接，有变化的文件�
     hd2qd check-updates      # 检查来自 GitHub 的 mod 是否有新版本
     hd2qd lua                # 部署前检查 Lua mod：启动脚本、加载器、无法运行的脚本、上一局、上次崩溃
     hd2qd self-update        # 检查本程序是否有新版本（正式版只看正式发布，开发版也看预发布）
+    hd2qd report             # 导出诊断包（zip，默认在桌面），反馈问题时附上
     hd2qd deploy
 
 完整命令列表见英文部分的表格。设置与记录保存在 `%USERPROFILE%\.hd2-mod-cli`。每个文件保存时会把上一版留为同名的 `.bak`：mod 可以重新下载，而你的选择（哪些 mod、顺序、可选内容、标签）不能，且只有几十 KB。需要回退时，把 `.bak` 改名覆盖原文件即可。
